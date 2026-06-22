@@ -6,15 +6,34 @@ This project is independently maintained and is based on the MIT-licensed [`kuje
 
 ## Why this repo exists
 
-The original Python MCP server was useful but awkward to configure across Codex, Claude Desktop, Cursor, Claude Code, and other clients because each app needed a hand-maintained virtualenv path. Curator fixes that by making the server a normal installable tool with one stable command:
+The original Python MCP server was useful but awkward to configure across Codex, Claude Desktop, Cursor, Claude Code, and other clients because each app needed a hand-maintained virtualenv path. Curator fixes that by making the server a normal published Python tool that clients can launch with `uvx`:
 
 ```bash
-zotero-curator serve
+uvx --from zotero-curator zotero-curator serve
 ```
 
-That command can be installed once with `uv tool install` or run without a persistent venv through `uvx`.
+That command lets each MCP client start its own stdio server process without knowing about a local checkout path, a repo-local `.venv`, or per-app shell setup.
 
-## Install
+## Recommended install: `uvx`
+
+Install [`uv`](https://docs.astral.sh/uv/) once, then configure Curator through the published package:
+
+```bash
+uvx --from zotero-curator zotero-curator setup --local
+uvx --from zotero-curator zotero-curator doctor
+```
+
+`uvx` keeps Python environments out of Claude/Codex/Cursor config files. It resolves and caches the published `zotero-curator` package, then runs the requested console command.
+
+For GUI-launched clients on macOS, prefer the absolute `uvx` path from:
+
+```bash
+command -v uvx
+```
+
+Common Homebrew paths are `/opt/homebrew/bin/uvx` on Apple Silicon and `/usr/local/bin/uvx` on Intel macOS.
+
+Optional persistent install:
 
 ```bash
 uv tool install zotero-curator
@@ -22,11 +41,15 @@ zotero-curator setup --local
 zotero-curator doctor
 ```
 
-Zero-install client command:
+## Let an agent set it up
 
-```bash
-uvx --from zotero-curator zotero-curator serve
+Copy this prompt into Codex, Claude Code, Cursor, or another local coding agent:
+
+```text
+Install Curator for Zotero for me by following this repo's AGENTS.md. Use the published uvx workflow and configure these MCP clients: CLIENTS_TO_CONFIGURE.
 ```
+
+Replace `CLIENTS_TO_CONFIGURE` with the clients you use, for example `Claude Desktop and Codex`.
 
 From a local checkout:
 
@@ -44,8 +67,8 @@ uv run ruff check .
 3. Run:
 
 ```bash
-zotero-curator setup --local
-zotero-curator doctor
+uvx --from zotero-curator zotero-curator setup --local
+uvx --from zotero-curator zotero-curator doctor
 ```
 
 Local mode uses library id `0` and does not require an API key.
@@ -53,14 +76,50 @@ Local mode uses library id `0` and does not require an API key.
 ## Web API setup
 
 ```bash
-zotero-curator setup --web --library-id YOUR_LIBRARY_ID --api-key YOUR_API_KEY
+uvx --from zotero-curator zotero-curator setup --web --library-id YOUR_LIBRARY_ID --api-key YOUR_API_KEY
 ```
 
 For group libraries, add `--library-type group`.
 
 ## MCP client config
 
-Claude/Cursor-style JSON:
+Recommended `uvx` config for Claude Desktop, Cursor, and other JSON-style MCP clients:
+
+```json
+{
+  "mcpServers": {
+    "zotero": {
+      "command": "/opt/homebrew/bin/uvx",
+      "args": [
+        "--from",
+        "zotero-curator",
+        "zotero-curator",
+        "serve"
+      ]
+    }
+  }
+}
+```
+
+Replace `/opt/homebrew/bin/uvx` with the output of `command -v uvx` on your machine.
+
+Recommended `uvx` config for Codex:
+
+```toml
+[mcp_servers.zotero]
+type = "stdio"
+command = "/opt/homebrew/bin/uvx"
+args = ["--from", "zotero-curator", "zotero-curator", "serve"]
+startup_timeout_sec = 30
+```
+
+If you prefer a pinned release, pin the package in the `--from` argument:
+
+```toml
+args = ["--from", "zotero-curator==0.1.0", "zotero-curator", "serve"]
+```
+
+Installed-tool fallback:
 
 ```json
 {
@@ -73,29 +132,14 @@ Claude/Cursor-style JSON:
 }
 ```
 
-Codex TOML:
-
-```toml
-[mcp_servers.zotero]
-command = "zotero-curator"
-args = ["serve"]
-```
-
-Zero-install `uvx` TOML:
-
-```toml
-[mcp_servers.zotero]
-command = "uvx"
-args = ["--from", "zotero-curator", "zotero-curator", "serve"]
-```
-
 Generate config snippets:
 
 ```bash
-zotero-curator mcp-config --format json
-zotero-curator mcp-config --format toml
-zotero-curator mcp-config --uvx --format toml
+uvx --from zotero-curator zotero-curator mcp-config --uvx --format json
+uvx --from zotero-curator zotero-curator mcp-config --uvx --format toml
 ```
+
+Current workflow note: `setup` writes Curator's central Zotero settings and prints client config snippets. `mcp-config` only prints JSON/TOML. Neither command edits Claude, Codex, Cursor, or other client config files yet. A future `install-client` or `client-config apply` command should detect known config paths, back up existing files, merge the `zotero` MCP server entry, support `--dry-run`, and preserve user-managed settings.
 
 Release instructions are in [docs/release.md](docs/release.md). Claude Desktop MCPB bundle notes are in [docs/mcpb.md](docs/mcpb.md).
 
@@ -104,21 +148,33 @@ Release instructions are in [docs/release.md](docs/release.md). Claude Desktop M
 Curator can create a Zotero `preprint` item directly from an arXiv id, abstract URL, or PDF URL:
 
 ```bash
-zotero-curator add-arxiv https://arxiv.org/abs/2410.03529
+uvx --from zotero-curator zotero-curator add-arxiv https://arxiv.org/abs/2410.03529
 ```
 
 The command is dry-run-first. To apply it, enable writes globally and pass `--apply`:
 
 ```bash
-zotero-curator setup --local --write-enabled
-zotero-curator add-arxiv 2410.03529 --tag AI --collection COLLECTION_KEY --apply
+uvx --from zotero-curator zotero-curator setup --local --write-enabled
+uvx --from zotero-curator zotero-curator add-arxiv 2410.03529 --tag AI --collection COLLECTION_KEY --apply
 ```
 
 This imports arXiv metadata first and stores the PDF as a Zotero file attachment by default. Use `--link-pdf` to attach only the arXiv PDF URL, `--no-pdf` to create only the metadata item, or `--pdf-mode {stored,linked,none}` for explicit control.
 
 ## Settings
 
-Curator stores central settings in:
+Curator stores central settings in the platform config directory. Print the exact path with:
+
+```bash
+uvx --from zotero-curator zotero-curator setup-info
+```
+
+On macOS this is typically:
+
+```text
+~/Library/Application Support/zotero-curator/config.toml
+```
+
+On many Linux systems this is typically:
 
 ```text
 ~/.config/zotero-curator/config.toml
@@ -195,12 +251,20 @@ This makes accidental library mutations much harder.
 
 ## Optional extras
 
-The base install stays small. Heavy PDF and semantic dependencies are opt-in:
+The base install stays small. Heavy PDF and semantic dependencies are opt-in. For persistent installs:
 
 ```bash
 uv tool install 'zotero-curator[pdf]'
 uv tool install 'zotero-curator[semantic]'
 uv tool install 'zotero-curator[all]'
+```
+
+For `uvx`-launched MCP clients, request the extra in the `--from` package:
+
+```bash
+uvx --from 'zotero-curator[pdf]' zotero-curator serve
+uvx --from 'zotero-curator[semantic]' zotero-curator serve
+uvx --from 'zotero-curator[all]' zotero-curator serve
 ```
 
 From a checkout:
@@ -217,7 +281,7 @@ The `pdf` extra enables page-aware PDF reads and bookmark extraction from stored
 Curator writes structured JSONL runtime logs under the platform log directory shown by:
 
 ```bash
-zotero-curator doctor
+uvx --from zotero-curator zotero-curator doctor
 ```
 
 Set `response_format = "json"` in the central settings file, or set `ZOTERO_CURATOR_RESPONSE_FORMAT=json`, to make action-style write responses return structured JSON instead of Markdown. The `zotero_diagnostics` MCP tool reports resolved settings, log paths, and Zotero API reachability.
@@ -239,6 +303,7 @@ Implemented:
 
 Next polish:
 
+- Client config apply command that safely injects the recommended `uvx` server entry into Claude/Codex/Cursor configs.
 - PyPI trusted publishing and signed GitHub releases.
 - Claude Desktop `.mcpb` packaging.
 - Optional semantic index and PDF extraction extras.
