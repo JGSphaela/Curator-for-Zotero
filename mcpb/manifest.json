@@ -1,0 +1,51 @@
+{
+  "$schema": "https://github.com/anthropics/mcpb/blob/main/schemas/mcpb-manifest-v0.4.schema.json",
+  "manifest_version": "0.4",
+  "name": "zotero-curator",
+  "display_name": "Curator for Zotero",
+  "version": "0.1.0",
+  "description": "Research-focused MCP server and setup helper for Zotero.",
+  "long_description": "Curator for Zotero lets Claude Desktop and other MCP clients search Zotero, inspect metadata, read indexed attachment text, import arXiv preprints, and safely organize items with dry-run-first write tools.",
+  "author": {
+    "name": "Sphaela / JGSphaela contributors",
+    "url": "https://github.com/JGSphaela"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JGSphaela/Curator-for-Zotero"
+  },
+  "homepage": "https://github.com/JGSphaela/Curator-for-Zotero",
+  "documentation": "https://github.com/JGSphaela/Curator-for-Zotero#readme",
+  "support": "https://github.com/JGSphaela/Curator-for-Zotero/issues",
+  "license": "MIT",
+  "keywords": ["zotero", "research", "citations", "mcp", "arxiv"],
+  "server": {
+    "type": "uv",
+    "entry_point": "pyproject.toml",
+    "mcp_config": {
+      "command": "uvx",
+      "args": ["--from", "zotero-curator", "zotero-curator", "serve"]
+    }
+  },
+  "tools": [
+    {"name": "zotero_healthcheck", "description": "Check Zotero configuration and API reachability."},
+    {"name": "zotero_search_items", "description": "Search Zotero library items."},
+    {"name": "zotero_item_metadata", "description": "Read detailed metadata for a Zotero item."},
+    {"name": "zotero_item_fulltext", "description": "Read indexed attachment text."},
+    {"name": "zotero_pdf_pages", "description": "Read page-aware PDF text when the pdf extra is installed."},
+    {"name": "zotero_pdf_outline", "description": "Read PDF bookmarks when the pdf extra is installed."},
+    {"name": "zotero_item_text_chunk", "description": "Read indexed attachment text in chunks."},
+    {"name": "zotero_item_search_text", "description": "Search within an indexed attachment."},
+    {"name": "zotero_semantic_rebuild", "description": "Build a local semantic search index when the semantic extra is installed."},
+    {"name": "zotero_semantic_search", "description": "Search the local semantic index when the semantic extra is installed."},
+    {"name": "zotero_add_arxiv", "description": "Add an arXiv preprint with optional stored PDF attachment."},
+    {"name": "zotero_apply_organization_plan", "description": "Apply dry-run-first tag, collection, note, and metadata operations."}
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "python": ">=3.11"
+    }
+  }
+}
