@@ -107,5 +107,5 @@ On macOS this is typically:
 - Do not copy Zotero API keys into Claude/Codex/Cursor config unless the user explicitly asks for that deployment model.
 - Preserve existing user config entries when editing MCP client config files.
 - Back up config files before modifying them.
-- Keep write tools disabled unless the user explicitly requests writes; real writes require both `write_enabled = true` and individual tool calls with `dry_run=false`.
+- Keep write tools disabled unless the user explicitly requests writes. Real writes require Web API mode, a Zotero API key with write access, `write_enabled = true`, and individual tool calls with `dry_run=false`. Zotero Local API v3 currently accepts only `GET`, so local API mode is read-only for Curator write tools until Zotero adds local write support and Curator opts into it.
 - Use pinned packages such as `zotero-curator==0.1.0` when the user prefers reproducibility over auto-updating to the latest published release.

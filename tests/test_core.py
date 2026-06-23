@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from pathlib import Path
 
 from zotero_curator.arxiv import (
@@ -50,10 +51,52 @@ ARXIV_FEED = """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 class FakeZotero:
     def __init__(self) -> None:
         self.created_collections: list[list[dict[str, str]]] = []
+        self.updated_collections: list[dict[str, object]] = []
+        self.deleted_collections: list[dict[str, object]] = []
+        self.created_items: list[list[dict[str, object]]] = []
+        self.updated_items: list[dict[str, object]] = []
+        self.collections_by_key: dict[str, dict[str, object]] = {}
+        self.items_by_key: dict[str, dict[str, object]] = {}
 
     def create_collections(self, payload: list[dict[str, str]]):
-        self.created_collections.append(payload)
+        self.created_collections.append(deepcopy(payload))
         return {"successful": {"0": {"key": "ABC123"}}}
+
+    def collection(self, key: str):
+        collection = self.collections_by_key.get(key)
+        return deepcopy(collection) if collection else None
+
+    def update_collection(self, collection: dict[str, object]):
+        self.updated_collections.append(deepcopy(collection))
+        return {"successful": {"0": collection.get("key", "COL123")}}
+
+    def delete_collection(self, collection: dict[str, object]):
+        self.deleted_collections.append(deepcopy(collection))
+        return {"deleted": 1}
+
+    def create_items(self, payload: list[dict[str, object]]):
+        self.created_items.append(deepcopy(payload))
+        return {"successful": {"0": {"key": "ITEM123"}}}
+
+    def item(self, key: str):
+        item = self.items_by_key.get(key)
+        return deepcopy(item) if item else None
+
+    def update_item(self, item: dict[str, object]):
+        self.updated_items.append(deepcopy(item))
+        return {"successful": {"0": item.get("key", "ITEM123")}}
+
+
+def configure_web_writes(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+    write_config(
+        local=False,
+        library_id="123",
+        api_key="secret",
+        write_enabled=True,
+        path=path,
+    )
 
 
 
@@ -120,16 +163,269 @@ def test_env_flag(monkeypatch) -> None:
     assert env_flag("FLAG", True) is True
 
 
-def test_create_collection_payload(monkeypatch) -> None:
+def test_write_guard_allows_dry_run_in_local_mode(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+    write_config(local=True, write_enabled=True, path=path)
+
+    from zotero_curator.server import write_guard
+
+    assert write_guard(dry_run=True) is None
+
+
+def test_local_api_writes_follow_current_zotero_protocol() -> None:
+    from zotero_curator.server import LOCAL_API_WRITES_SUPPORTED
+
+    # Zotero Local API v3 currently accepts GET only. Flip this when Zotero ships
+    # local write support and Curator intentionally opts into it.
+    assert LOCAL_API_WRITES_SUPPORTED is False
+
+
+def test_write_guard_blocks_real_writes_in_local_mode(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+    write_config(local=True, write_enabled=True, path=path)
+
+    from zotero_curator.server import write_guard
+
+    blocked = write_guard(dry_run=False)
+    assert blocked is not None
+    assert "Local API currently accepts only GET" in blocked
+    assert "Web API mode" in blocked
+
+
+def test_write_guard_can_reenable_local_writes_when_zotero_supports_them(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+    write_config(local=True, write_enabled=True, path=path)
+
+    import zotero_curator.server as server
+
+    monkeypatch.setattr(server, "LOCAL_API_WRITES_SUPPORTED", True)
+
+    assert server.write_guard(dry_run=False) is None
+
+
+def test_write_guard_requires_web_api_key(monkeypatch, tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+    write_config(local=False, library_id="123", write_enabled=True, path=path)
+
+    from zotero_curator.server import write_guard
+
+    blocked = write_guard(dry_run=False)
+    assert blocked is not None
+    assert "API key" in blocked
+
+
+def test_write_guard_allows_web_api_writes_when_enabled(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator.server import write_guard
+
+    assert write_guard(dry_run=False) is None
+
+
+def test_create_collection_uses_web_api_create_payload(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
     from zotero_curator import server
 
     fake = FakeZotero()
     monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
-    monkeypatch.setattr(server, "write_guard", lambda dry_run: None)
 
     result = server.create_collection("Literature", parent_collection="PARENT", dry_run=False)
 
     assert fake.created_collections == [[{"name": "Literature", "parentCollection": "PARENT"}]]
+    assert "successful=1" in result
+
+
+def test_rename_collection_uses_retrieved_editable_json(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeZotero()
+    fake.collections_by_key["COL123"] = {
+        "key": "COL123",
+        "data": {"key": "COL123", "version": 7, "name": "Old", "parentCollection": False},
+    }
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+    result = server.rename_collection("COL123", "New", dry_run=False)
+
+    assert fake.updated_collections == [
+        {
+            "key": "COL123",
+            "data": {"key": "COL123", "version": 7, "name": "New", "parentCollection": False},
+        }
+    ]
+    assert "successful=1" in result
+
+
+def test_delete_collection_uses_retrieved_versioned_object(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeZotero()
+    fake.collections_by_key["COL123"] = {
+        "key": "COL123",
+        "data": {"key": "COL123", "version": 7, "name": "Old", "parentCollection": False},
+    }
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+    result = server.delete_collection("COL123", dry_run=False)
+
+    assert fake.deleted_collections == [
+        {
+            "key": "COL123",
+            "data": {"key": "COL123", "version": 7, "name": "Old", "parentCollection": False},
+        }
+    ]
+    assert "response=JSON object" in result
+
+
+def test_update_item_tags_uses_web_api_editable_item_json(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeZotero()
+    fake.items_by_key["ITEM123"] = {
+        "key": "ITEM123",
+        "data": {
+            "key": "ITEM123",
+            "version": 11,
+            "itemType": "journalArticle",
+            "title": "Paper",
+            "tags": [{"tag": "Keep"}, {"tag": "Remove"}],
+            "collections": ["COL1"],
+        },
+    }
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+    result = server.update_item_tags(
+        "ITEM123",
+        add_tags=["Add", "Add"],
+        remove_tags=["Remove"],
+        dry_run=False,
+    )
+
+    assert fake.updated_items == [
+        {
+            "key": "ITEM123",
+            "data": {
+                "key": "ITEM123",
+                "version": 11,
+                "itemType": "journalArticle",
+                "title": "Paper",
+                "tags": [{"tag": "Keep"}, {"tag": "Add"}],
+                "collections": ["COL1"],
+            },
+        }
+    ]
+    assert "successful=1" in result
+
+
+def test_update_item_collections_uses_complete_collection_array(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeZotero()
+    fake.items_by_key["ITEM123"] = {
+        "key": "ITEM123",
+        "data": {
+            "key": "ITEM123",
+            "version": 11,
+            "itemType": "journalArticle",
+            "title": "Paper",
+            "tags": [],
+            "collections": ["COL1", "COL2"],
+        },
+    }
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+    result = server.update_item_collections(
+        "ITEM123",
+        add_collections=["COL3", "COL3"],
+        remove_collections=["COL1"],
+        dry_run=False,
+    )
+
+    assert fake.updated_items[0]["data"]["collections"] == ["COL2", "COL3"]
+    assert fake.updated_items[0]["data"]["version"] == 11
+    assert "successful=1" in result
+
+
+def test_update_item_metadata_preserves_version_and_rejects_protected_fields(
+    monkeypatch, tmp_path: Path
+) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeZotero()
+    fake.items_by_key["ITEM123"] = {
+        "key": "ITEM123",
+        "data": {
+            "key": "ITEM123",
+            "version": 11,
+            "itemType": "journalArticle",
+            "title": "Old",
+            "abstractNote": "Before",
+        },
+    }
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+    blocked = server.update_item_metadata("ITEM123", {"key": "OTHER"}, dry_run=False)
+    result = server.update_item_metadata(
+        "ITEM123",
+        {"title": "New", "abstractNote": "After"},
+        dry_run=False,
+    )
+
+    assert "protected fields" in blocked
+    assert fake.updated_items == [
+        {
+            "key": "ITEM123",
+            "data": {
+                "key": "ITEM123",
+                "version": 11,
+                "itemType": "journalArticle",
+                "title": "New",
+                "abstractNote": "After",
+            },
+        }
+    ]
+    assert "successful=1" in result
+
+
+def test_create_child_note_uses_web_api_item_create_payload(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeZotero()
+    fake.items_by_key["PARENT"] = {
+        "key": "PARENT",
+        "data": {"key": "PARENT", "version": 3, "itemType": "journalArticle", "title": "Paper"},
+    }
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+    result = server.create_child_note("PARENT", "Hello\n\n<world>", tags=["Note"], dry_run=False)
+
+    assert fake.created_items == [
+        [
+            {
+                "itemType": "note",
+                "parentItem": "PARENT",
+                "note": "<p>Hello</p><p>&lt;world&gt;</p>",
+                "tags": [{"tag": "Note"}],
+            }
+        ]
+    ]
     assert "successful=1" in result
 
 

@@ -54,18 +54,47 @@ from zotero_curator.settings import config_status_lines, load_config
 
 mcp = FastMCP("Curator for Zotero")
 
+# Zotero's current Local API v3 documentation says write requests are unsupported and
+# only GET is accepted. When Zotero ships local write support, flip this gate and
+# update the tests/docs that intentionally encode the current API protocol.
+LOCAL_API_WRITES_SUPPORTED = False
+
+
+def zotero_backend_write_capable(cfg: Any) -> bool:
+    if cfg.local:
+        return LOCAL_API_WRITES_SUPPORTED
+    return bool(cfg.api_key)
+
 
 def write_enabled() -> bool:
-    return load_config().write_enabled
+    cfg = load_config()
+    return cfg.write_enabled and zotero_backend_write_capable(cfg)
 
 
 def write_guard(dry_run: bool) -> str | None:
-    if dry_run or write_enabled():
+    if dry_run:
         return None
-    return (
-        "Write blocked. Set `write_enabled = true` in the Curator settings or set "
-        "ZOTERO_WRITE_ENABLED=true, then call the tool with dry_run=false."
-    )
+    cfg = load_config()
+    if cfg.local and not LOCAL_API_WRITES_SUPPORTED:
+        return (
+            "Write blocked. The Zotero Local API currently accepts only GET requests, "
+            "so local mode is read-only for Curator write tools. Real writes require "
+            "Zotero Web API mode with an API key that has write access. Run "
+            "`zotero-curator setup --web --library-id YOUR_LIBRARY_ID "
+            "--api-key YOUR_WRITE_ENABLED_API_KEY --write-enabled`."
+        )
+    if not zotero_backend_write_capable(cfg):
+        return (
+            "Write blocked. Zotero Web API writes require an API key with write access. "
+            "Run `zotero-curator setup --web --library-id YOUR_LIBRARY_ID "
+            "--api-key YOUR_WRITE_ENABLED_API_KEY --write-enabled`."
+        )
+    if not cfg.write_enabled:
+        return (
+            "Write blocked. Set `write_enabled = true` in the Curator settings or set "
+            "ZOTERO_WRITE_ENABLED=true, then call the tool with dry_run=false."
+        )
+    return None
 
 
 def get_indexed_attachment_text(
@@ -702,14 +731,21 @@ def semantic_search_items(query: str, n_results: int | None = 5, collection_name
 @mcp.tool(name="zotero_write_status", description="Show whether write tools are enabled.")
 def write_status() -> str:
     cfg = load_config()
-    return "\n".join(
-        [
-            "# Zotero Write Status",
-            f"Write tools: {'enabled' if cfg.write_enabled else 'disabled'}",
-            f"Mode: {cfg.mode_label}",
-            "Most write tools default to dry_run=true. Set dry_run=false to apply changes.",
-        ]
-    )
+    backend_capable = zotero_backend_write_capable(cfg)
+    effective_enabled = cfg.write_enabled and backend_capable
+    lines = [
+        "# Zotero Write Status",
+        f"Write setting: {'enabled' if cfg.write_enabled else 'disabled'}",
+        f"Mode: {cfg.mode_label}",
+        f"Backend write-capable: {'yes' if backend_capable else 'no'}",
+        f"Effective writes: {'enabled' if effective_enabled else 'disabled'}",
+        "Most write tools default to dry_run=true. Set dry_run=false to apply changes.",
+    ]
+    if cfg.local and not LOCAL_API_WRITES_SUPPORTED:
+        lines.append("Local mode is read-only for Curator write tools because the current Zotero Local API accepts only GET requests.")
+    elif not cfg.api_key:
+        lines.append("Web API mode is missing an API key. Configure a key with write access before applying writes.")
+    return "\n".join(lines)
 
 
 @mcp.tool(name="zotero_add_arxiv", description="Add an arXiv preprint item with an optional stored or linked PDF attachment.")

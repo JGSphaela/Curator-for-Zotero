@@ -151,10 +151,10 @@ Curator can create a Zotero `preprint` item directly from an arXiv id, abstract 
 uvx --from zotero-curator zotero-curator add-arxiv https://arxiv.org/abs/2410.03529
 ```
 
-The command is dry-run-first. To apply it, enable writes globally and pass `--apply`:
+The command is dry-run-first. To apply it, configure Web API mode with a write-enabled API key, enable writes globally, and pass `--apply`:
 
 ```bash
-uvx --from zotero-curator zotero-curator setup --local --write-enabled
+uvx --from zotero-curator zotero-curator setup --web --library-id YOUR_LIBRARY_ID --api-key YOUR_WRITE_ENABLED_API_KEY --write-enabled
 uvx --from zotero-curator zotero-curator add-arxiv 2410.03529 --tag AI --collection COLLECTION_KEY --apply
 ```
 
@@ -242,12 +242,14 @@ Write/organization tools are dry-run-first and additionally require `write_enabl
 
 ## Safety model
 
-Write tools default to `dry_run=true`. Real write calls require both:
+Write tools default to `dry_run=true`. Real write calls require all of the following:
 
-1. `write_enabled = true` in settings, or `ZOTERO_WRITE_ENABLED=true`.
-2. The individual tool call sets `dry_run=false`.
+1. Web API mode: `local = false`.
+2. A Zotero API key with write access.
+3. `write_enabled = true` in settings, or `ZOTERO_WRITE_ENABLED=true`.
+4. The individual tool call sets `dry_run=false`.
 
-This makes accidental library mutations much harder.
+The Zotero local API is treated as read-only by Curator because Zotero's Local API v3 documentation says: "Write requests are currently unsupported. Only `GET` is accepted." Local mode can be used for reads and dry-runs, but Curator blocks non-dry-run write tools before they call Zotero. This keeps the implementation aligned with the current API protocol and makes it easy to re-enable local writes later when Zotero adds support.
 
 ## Optional extras
 
