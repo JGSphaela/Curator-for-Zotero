@@ -276,7 +276,7 @@ uv pip install --python .venv/bin/python -e '.[pdf]'
 uv pip install --python .venv/bin/python -e '.[semantic]'
 ```
 
-The `pdf` extra enables page-aware PDF reads and bookmark extraction from stored Zotero attachments. The `semantic` extra stores a local Chroma index under the platform data directory shown by `zotero-curator doctor`; rebuild with `zotero_semantic_rebuild` after major library changes, then search with `zotero_semantic_search`. See [docs/optional-extras.md](docs/optional-extras.md) for storage and rebuild details.
+The `pdf` extra enables page-aware PDF reads and bookmark extraction from stored Zotero attachments. The `semantic` extra stores a local Chroma index under the platform data directory shown by `zotero-curator doctor`; rebuild with `zotero_semantic_rebuild` after major library changes, then search with `zotero_semantic_search`. Curator uses a cross-process lock around semantic rebuilds and searches, so concurrent MCP clients will return a clear "semantic index busy" message instead of mutating or querying the same Chroma store at the same time. See [docs/optional-extras.md](docs/optional-extras.md) for storage and rebuild details.
 
 ## Runtime diagnostics
 

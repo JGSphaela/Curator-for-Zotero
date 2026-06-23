@@ -47,6 +47,7 @@ from zotero_curator.pdf_tools import OptionalPdfDependencyError, extract_pages, 
 from zotero_curator.runtime import configure_logging, log_event, runtime_diagnostics
 from zotero_curator.semantic import (
     OptionalSemanticDependencyError,
+    SemanticIndexBusyError,
     build_semantic_index,
     semantic_search,
 )
@@ -694,6 +695,8 @@ def semantic_rebuild(limit: int | None = 500, collection_name: str = "zotero-ite
         result = build_semantic_index(zot, limit=clamp_int(limit, 500, 1, 5000), collection_name=collection_name)
     except OptionalSemanticDependencyError as exc:
         return str(exc)
+    except SemanticIndexBusyError as exc:
+        return f"Semantic index busy: {exc}"
     except Exception as exc:
         return f"Error rebuilding semantic index: {exc}"
     log_event("semantic_rebuild", indexed=result.get("indexed"), store=result.get("store"))
@@ -711,6 +714,8 @@ def semantic_search_items(query: str, n_results: int | None = 5, collection_name
         result = semantic_search(query, n_results=clamp_int(n_results, 5, 1, 25), collection_name=collection_name)
     except OptionalSemanticDependencyError as exc:
         return str(exc)
+    except SemanticIndexBusyError as exc:
+        return f"Semantic index busy: {exc}"
     except Exception as exc:
         return f"Error searching semantic index: {exc}"
     ids = result.get("ids", [[]])[0]

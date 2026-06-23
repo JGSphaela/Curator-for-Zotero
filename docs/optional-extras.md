@@ -56,6 +56,8 @@ export ZOTERO_CURATOR_DATA_DIR=/path/to/curator-data
 
 ## Rebuild and update workflow
 
+Curator uses a cross-process lock file under the semantic index directory while rebuilding or searching. If another MCP client is already using the index, semantic tools return a clear busy message instead of concurrently mutating or querying the same Chroma store.
+
 After adding many Zotero items, changing abstracts/titles, or switching libraries, rebuild the index:
 
 ```text

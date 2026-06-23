@@ -3,6 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from zotero_curator.arxiv import (
     arxiv_imported_pdf_attachment_item,
     arxiv_pdf_attachment_item,
@@ -25,7 +27,7 @@ from zotero_curator.formatting import (
     tag_names,
     unique_strings,
 )
-from zotero_curator.semantic import document_from_item
+from zotero_curator.semantic import SemanticIndexBusyError, document_from_item, semantic_index_lock
 from zotero_curator.settings import env_flag, read_config_file, write_config
 
 ARXIV_FEED = """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -485,3 +487,49 @@ def test_semantic_document_from_item() -> None:
     assert document.key == "ABC123"
     assert "Semantic Search" in document.text
     assert document.metadata["itemType"] == "journalArticle"
+
+
+def test_semantic_index_lock_blocks_concurrent_access(tmp_path: Path) -> None:
+    store = tmp_path / "semantic"
+
+    with semantic_index_lock(store):
+        assert (store / ".index.lock").is_dir()
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store):
+            pass
+
+    assert not (store / ".index.lock").exists()
+
+
+def test_semantic_index_lock_allows_later_access_after_release(tmp_path: Path) -> None:
+    store = tmp_path / "semantic"
+
+    with semantic_index_lock(store):
+        pass
+
+    with semantic_index_lock(store):
+        assert (store / ".index.lock").is_dir()
+
+
+def test_semantic_rebuild_reports_busy_lock(monkeypatch, tmp_path: Path) -> None:
+    from zotero_curator import semantic, server
+
+    monkeypatch.setattr(semantic, "semantic_store_dir", lambda: tmp_path / "semantic")
+    monkeypatch.setattr(server, "get_zotero_client", lambda: object())
+    monkeypatch.setattr(semantic, "require_semantic_dependencies", lambda: (object(), object()))
+
+    with semantic.semantic_index_lock(tmp_path / "semantic"):
+        result = server.semantic_rebuild()
+
+    assert result.startswith("Semantic index busy:")
+
+
+def test_semantic_search_reports_busy_lock(monkeypatch, tmp_path: Path) -> None:
+    from zotero_curator import semantic, server
+
+    monkeypatch.setattr(semantic, "semantic_store_dir", lambda: tmp_path / "semantic")
+    monkeypatch.setattr(semantic, "require_semantic_dependencies", lambda: (object(), object()))
+
+    with semantic.semantic_index_lock(tmp_path / "semantic"):
+        result = server.semantic_search_items("query")
+
+    assert result.startswith("Semantic index busy:")

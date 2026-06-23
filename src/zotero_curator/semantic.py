@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -14,11 +17,55 @@ class OptionalSemanticDependencyError(RuntimeError):
     pass
 
 
+class SemanticIndexBusyError(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class SemanticDocument:
     key: str
     text: str
     metadata: dict[str, str]
+
+
+class SemanticIndexLock:
+    """Cross-process semantic-index lock based on atomic directory creation."""
+
+    def __init__(self, store: Path, timeout_seconds: float = 0.0) -> None:
+        self.path = store / ".index.lock"
+        self.timeout_seconds = max(0.0, timeout_seconds)
+        self.acquired = False
+
+    def __enter__(self) -> SemanticIndexLock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + self.timeout_seconds
+        while True:
+            try:
+                os.mkdir(self.path)
+            except FileExistsError as exc:
+                if time.monotonic() >= deadline:
+                    raise SemanticIndexBusyError(
+                        "Semantic index is busy. Another Curator process is rebuilding or searching "
+                        "the semantic index; try again after that operation finishes."
+                    ) from exc
+                time.sleep(0.05)
+            else:
+                self.acquired = True
+                with suppress(OSError):
+                    (self.path / "owner.txt").write_text(
+                        f"pid={os.getpid()}\ncreated={time.time()}\n",
+                        encoding="utf-8",
+                    )
+                return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if not self.acquired:
+            return
+        try:
+            (self.path / "owner.txt").unlink(missing_ok=True)
+            self.path.rmdir()
+        finally:
+            self.acquired = False
 
 
 def require_semantic_dependencies():
@@ -37,6 +84,10 @@ def semantic_store_dir() -> Path:
     cfg = load_config()
     base = cfg.data_dir or (Path.home() / ".local" / "share" / "zotero-curator")
     return base / "semantic"
+
+
+def semantic_index_lock(store: Path | None = None, timeout_seconds: float = 0.0) -> SemanticIndexLock:
+    return SemanticIndexLock(store or semantic_store_dir(), timeout_seconds=timeout_seconds)
 
 
 def document_from_item(item: dict[str, Any]) -> SemanticDocument | None:
@@ -77,22 +128,23 @@ def document_from_item(item: dict[str, Any]) -> SemanticDocument | None:
 def build_semantic_index(zot: Any, limit: int = 500, collection_name: str = "zotero-items") -> dict[str, Any]:
     chromadb, SentenceTransformer = require_semantic_dependencies()
     store = semantic_store_dir()
-    store.mkdir(parents=True, exist_ok=True)
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    client = chromadb.PersistentClient(path=str(store))
-    collection = client.get_or_create_collection(collection_name)
-    items = zot.items(limit=limit)
-    documents = [doc for item in items if (doc := document_from_item(item))]
-    if not documents:
-        return {"indexed": 0, "store": str(store), "collection": collection_name}
-    embeddings = model.encode([doc.text for doc in documents], normalize_embeddings=True).tolist()
-    collection.upsert(
-        ids=[doc.key for doc in documents],
-        documents=[doc.text for doc in documents],
-        metadatas=[doc.metadata for doc in documents],
-        embeddings=embeddings,
-    )
-    return {"indexed": len(documents), "store": str(store), "collection": collection_name}
+    with semantic_index_lock(store):
+        store.mkdir(parents=True, exist_ok=True)
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        client = chromadb.PersistentClient(path=str(store))
+        collection = client.get_or_create_collection(collection_name)
+        items = zot.items(limit=limit)
+        documents = [doc for item in items if (doc := document_from_item(item))]
+        if not documents:
+            return {"indexed": 0, "store": str(store), "collection": collection_name}
+        embeddings = model.encode([doc.text for doc in documents], normalize_embeddings=True).tolist()
+        collection.upsert(
+            ids=[doc.key for doc in documents],
+            documents=[doc.text for doc in documents],
+            metadatas=[doc.metadata for doc in documents],
+            embeddings=embeddings,
+        )
+        return {"indexed": len(documents), "store": str(store), "collection": collection_name}
 
 
 def semantic_search(query: str, n_results: int = 5, collection_name: str = "zotero-items") -> dict[str, Any]:
@@ -100,8 +152,9 @@ def semantic_search(query: str, n_results: int = 5, collection_name: str = "zote
         raise ValueError("Provide a query for semantic search.")
     chromadb, SentenceTransformer = require_semantic_dependencies()
     store = semantic_store_dir()
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    client = chromadb.PersistentClient(path=str(store))
-    collection = client.get_or_create_collection(collection_name)
-    embedding = model.encode([query], normalize_embeddings=True).tolist()[0]
-    return collection.query(query_embeddings=[embedding], n_results=n_results)
+    with semantic_index_lock(store):
+        model = SentenceTransformer("all-MiniLM-L6-v2")
+        client = chromadb.PersistentClient(path=str(store))
+        collection = client.get_or_create_collection(collection_name)
+        embedding = model.encode([query], normalize_embeddings=True).tolist()[0]
+        return collection.query(query_embeddings=[embedding], n_results=n_results)
