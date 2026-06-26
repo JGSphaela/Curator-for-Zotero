@@ -142,6 +142,11 @@ def creator_summary(data: dict[str, Any], limit: int = 3) -> str:
 
 
 def format_item_summary(item: dict[str, Any], index: int | None = None) -> str:
+    if wants_json_response():
+        d = _item_to_dict(item)
+        if index is not None:
+            d["index"] = index
+        return json.dumps(d, indent=2, sort_keys=True, default=str)
     data = item.get("data", {})
     item_key = item.get("key") or data.get("key", "")
     item_type = data.get("itemType", "unknown")
@@ -168,7 +173,53 @@ def format_item_summary(item: dict[str, Any], index: int | None = None) -> str:
     return "\n".join(lines)
 
 
+def _item_to_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Convert a Zotero item to a structured dict for JSON output."""
+    data = item.get("data", {})
+    item_key = item.get("key") or data.get("key", "")
+    item_type = data.get("itemType", "unknown")
+
+    creators_by_role: dict[str, list[str]] = {}
+    for creator in data.get("creators", []):
+        role = creator.get("creatorType", "contributor")
+        if "firstName" in creator and "lastName" in creator:
+            name = f"{creator['lastName']}, {creator['firstName']}"
+        else:
+            name = creator.get("name", "")
+        if name:
+            creators_by_role.setdefault(role, []).append(name)
+
+    identifiers: dict[str, str] = {}
+    for field in ("url", "DOI", "ISBN"):
+        if value := data.get(field):
+            identifiers[field] = value
+
+    result: dict[str, Any] = {
+        "key": item_key,
+        "itemType": item_type,
+        "title": data.get("title", "Untitled"),
+    }
+    if item_type == "note":
+        result["note"] = strip_note_html(data.get("note", ""))
+    else:
+        result["date"] = data.get("date", "")
+        result["creators"] = creators_by_role
+        if pub := data.get("publicationTitle"):
+            result["publicationTitle"] = pub
+        if abstract := data.get("abstractNote"):
+            result["abstract"] = abstract
+    if tags := tag_names(item):
+        result["tags"] = tags
+    if identifiers:
+        result["identifiers"] = identifiers
+    if parent := data.get("parentItem"):
+        result["parentItem"] = parent
+    return result
+
+
 def format_item(item: dict[str, Any]) -> str:
+    if wants_json_response():
+        return json.dumps(_item_to_dict(item), indent=2, sort_keys=True, default=str)
     data = item.get("data", {})
     item_key = item.get("key") or data.get("key", "")
     item_type = data.get("itemType", "unknown")

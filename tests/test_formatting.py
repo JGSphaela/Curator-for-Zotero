@@ -596,3 +596,55 @@ class TestConstants:
         assert DEFAULT_CHUNK_CHARS == 8000
         assert DEFAULT_CHUNK_OVERLAP == 500
         assert MAX_CHUNK_CHARS == 25000
+
+
+class TestFormatItemJson:
+    def test_article_json(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {
+            "key": "K",
+            "data": {
+                "itemType": "journalArticle",
+                "title": "Deep Learning",
+                "creators": [{"creatorType": "author", "firstName": "Yann", "lastName": "LeCun"}],
+                "date": "2015",
+                "DOI": "10.1000/dl",
+                "tags": [{"tag": "DL"}],
+            },
+        }
+        parsed = json.loads(format_item(item))
+        assert parsed["key"] == "K"
+        assert parsed["title"] == "Deep Learning"
+        assert parsed["creators"]["author"] == ["LeCun, Yann"]
+        assert parsed["identifiers"]["DOI"] == "10.1000/dl"
+        assert parsed["tags"] == ["DL"]
+
+    def test_note_json(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "N1", "data": {"itemType": "note", "note": "<p>Hello</p>"}}
+        parsed = json.loads(format_item(item))
+        assert parsed["itemType"] == "note"
+        assert parsed["note"] == "Hello\n"
+
+    def test_minimal_json(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "X", "data": {"itemType": "book"}}
+        parsed = json.loads(format_item(item))
+        assert parsed["key"] == "X"
+        assert parsed["title"] == "Untitled"
+
+
+class TestFormatItemSummaryJson:
+    def test_summary_json_with_index(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "K", "data": {"itemType": "book", "title": "B"}}
+        parsed = json.loads(format_item_summary(item, index=1))
+        assert parsed["index"] == 1
+        assert parsed["key"] == "K"
+
+    def test_summary_json_without_index(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "K", "data": {"itemType": "book", "title": "B"}}
+        parsed = json.loads(format_item_summary(item))
+        assert "index" not in parsed
+        assert parsed["key"] == "K"

@@ -166,3 +166,57 @@ class TestMain:
         mock_print.assert_called()
         printed_path = mock_print.call_args[0][0]
         assert str(path) in str(printed_path)
+
+
+class TestInstallClient:
+    def test_dry_run_default(self, monkeypatch, tmp_path: Path) -> None:
+        config_dir = tmp_path / "claude"
+        config_dir.mkdir()
+        config_file = config_dir / "claude_desktop_config.json"
+        config_file.write_text('{"mcpServers": {}}')
+        monkeypatch.setattr(
+            "zotero_curator.cli._client_config_paths",
+            lambda client: {"claude-desktop": config_file} if client in ("claude-desktop", "all") else {},
+        )
+        with patch("builtins.print") as mock_print:
+            result = main(["install-client", "--client", "claude-desktop"])
+        assert result == 0
+        assert json.loads(config_file.read_text()) == {"mcpServers": {}}
+        printed = "\n".join(str(c) for c in mock_print.call_args_list)
+        assert "dry run" in printed.lower()
+
+    def test_apply_writes_config(self, monkeypatch, tmp_path: Path) -> None:
+        config_dir = tmp_path / "cursor"
+        config_dir.mkdir()
+        config_file = config_dir / "mcp.json"
+        existing = {"mcpServers": {"other": {"command": "x"}}}
+        config_file.write_text(json.dumps(existing))
+        monkeypatch.setattr(
+            "zotero_curator.cli._client_config_paths",
+            lambda client: {"cursor": config_file} if client in ("cursor", "all") else {},
+        )
+        result = main(["install-client", "--client", "cursor", "--apply"])
+        assert result == 0
+        written = json.loads(config_file.read_text())
+        assert "zotero" in written["mcpServers"]
+        assert written["mcpServers"]["other"]["command"] == "x"
+        assert written["mcpServers"]["zotero"]["command"] == "zotero-curator"
+        assert (config_file.with_suffix(".json.bak")).exists()
+
+    def test_idempotent(self, monkeypatch, tmp_path: Path) -> None:
+        from zotero_curator.cli import _server_config
+
+        config_dir = tmp_path / "claude"
+        config_dir.mkdir()
+        config_file = config_dir / "claude_desktop_config.json"
+        server_entry = _server_config("zotero-curator")
+        config_file.write_text(json.dumps({"mcpServers": {"zotero": server_entry}}))
+        monkeypatch.setattr(
+            "zotero_curator.cli._client_config_paths",
+            lambda client: {"claude-desktop": config_file},
+        )
+        with patch("builtins.print") as mock_print:
+            result = main(["install-client", "--client", "claude-desktop"])
+        assert result == 0
+        printed = "\n".join(str(c) for c in mock_print.call_args_list)
+        assert "already has this server entry" in printed

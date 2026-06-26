@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -533,3 +535,42 @@ def test_semantic_search_reports_busy_lock(monkeypatch, tmp_path: Path) -> None:
         result = server.semantic_search_items("query")
 
     assert result.startswith("Semantic index busy:")
+
+
+class TestSemanticStaleLock:
+    def test_stale_lock_cleaned_up(self, tmp_path: Path) -> None:
+        """A lock older than stale_seconds is reclaimed."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid=99999\ncreated={time.time() - 600}\n",
+            encoding="utf-8",
+        )
+        with semantic_index_lock(store, stale_seconds=300):
+            assert (store / ".index.lock").is_dir()
+
+    def test_fresh_lock_not_reclaimed(self, tmp_path: Path) -> None:
+        """A lock younger than stale_seconds is NOT removed."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid=99999\ncreated={time.time()}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
+
+    def test_stale_lock_uses_mtime_fallback(self, tmp_path: Path) -> None:
+        """When owner.txt is missing, mtime of the lock dir is used."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        old_time = time.time() - 600
+        os.utime(lock_dir, (old_time, old_time))
+        with semantic_index_lock(store, stale_seconds=300):
+            pass

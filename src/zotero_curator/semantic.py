@@ -31,15 +31,44 @@ class SemanticDocument:
 class SemanticIndexLock:
     """Cross-process semantic-index lock based on atomic directory creation."""
 
-    def __init__(self, store: Path, timeout_seconds: float = 0.0) -> None:
+    def __init__(self, store: Path, timeout_seconds: float = 0.0, stale_seconds: float = 300.0) -> None:
         self.path = store / ".index.lock"
         self.timeout_seconds = max(0.0, timeout_seconds)
+        self.stale_seconds = max(0.0, stale_seconds)
         self.acquired = False
+
+    def _try_reclaim_stale(self) -> bool:
+        """If the lock exists and is older than stale_seconds, remove it. Return True if removed."""
+        owner_file = self.path / "owner.txt"
+        try:
+            if not self.path.is_dir():
+                return False
+            if self.stale_seconds <= 0:
+                return False
+            lock_age = time.time() - self.path.stat().st_mtime
+            if owner_file.exists():
+                try:
+                    content = owner_file.read_text(encoding="utf-8")
+                    for line in content.splitlines():
+                        if line.startswith("created="):
+                            created = float(line.split("=", 1)[1])
+                            lock_age = time.time() - created
+                            break
+                except (OSError, ValueError):
+                    pass  # fall back to mtime
+            if lock_age < self.stale_seconds:
+                return False
+            owner_file.unlink(missing_ok=True)
+            self.path.rmdir()
+            return True
+        except OSError:
+            return False
 
     def __enter__(self) -> SemanticIndexLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self.timeout_seconds
         while True:
+            self._try_reclaim_stale()
             try:
                 os.mkdir(self.path)
             except FileExistsError as exc:
@@ -86,8 +115,8 @@ def semantic_store_dir() -> Path:
     return base / "semantic"
 
 
-def semantic_index_lock(store: Path | None = None, timeout_seconds: float = 0.0) -> SemanticIndexLock:
-    return SemanticIndexLock(store or semantic_store_dir(), timeout_seconds=timeout_seconds)
+def semantic_index_lock(store: Path | None = None, timeout_seconds: float = 0.0, stale_seconds: float = 300.0) -> SemanticIndexLock:
+    return SemanticIndexLock(store or semantic_store_dir(), timeout_seconds=timeout_seconds, stale_seconds=stale_seconds)
 
 
 def document_from_item(item: dict[str, Any]) -> SemanticDocument | None:
