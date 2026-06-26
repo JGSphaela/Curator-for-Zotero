@@ -16,7 +16,7 @@ from zotero_curator.settings import config_file, config_status_lines, load_confi
 
 def _server_config(command: str, uvx: bool = False) -> dict[str, Any]:
     if uvx:
-        uvx_cmd = command if command != "zotero-curator" else "uvx"
+        uvx_cmd = command if command != "zotero-curator" else shutil.which("uvx") or "uvx"
         return {
             "command": uvx_cmd,
             "args": ["--from", "zotero-curator", "zotero-curator", "serve"],

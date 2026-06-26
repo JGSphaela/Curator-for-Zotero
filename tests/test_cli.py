@@ -27,9 +27,10 @@ class TestServerConfig:
         assert cfg["command"] == "zotero-curator"
         assert cfg["args"] == ["serve"]
 
-    def test_uvx(self) -> None:
+    def test_uvx(self, monkeypatch) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: f"/usr/bin/{cmd}" if cmd == "uvx" else None)
         cfg = _server_config("zotero-curator", uvx=True)
-        assert cfg["command"] == "uvx"
+        assert cfg["command"] == "/usr/bin/uvx"
         assert cfg["args"] == ["--from", "zotero-curator", "zotero-curator", "serve"]
 
 
@@ -46,19 +47,21 @@ class TestMcpConfigOutput:
         assert "zotero" in parsed["mcpServers"]
         assert parsed["mcpServers"]["zotero"]["command"] == "zotero-curator"
 
-    def test_json_uvx(self) -> None:
+    def test_json_uvx(self, monkeypatch) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: f"/usr/bin/{cmd}" if cmd == "uvx" else None)
         result = _json_mcp_config("zotero-curator", uvx=True)
         parsed = json.loads(result)
-        assert parsed["mcpServers"]["zotero"]["command"] == "uvx"
+        assert parsed["mcpServers"]["zotero"]["command"] == "/usr/bin/uvx"
 
     def test_toml_contains_command(self) -> None:
         result = _toml_mcp_config("zotero-curator")
         assert "command = " in result
         assert "[mcp_servers.zotero]" in result
 
-    def test_toml_uvx(self) -> None:
+    def test_toml_uvx(self, monkeypatch) -> None:
+        monkeypatch.setattr("shutil.which", lambda cmd: f"/usr/bin/{cmd}" if cmd == "uvx" else None)
         result = _toml_mcp_config("zotero-curator", uvx=True)
-        assert "uvx" in result
+        assert "/usr/bin/uvx" in result
 
 
 # ---------------------------------------------------------------------------
