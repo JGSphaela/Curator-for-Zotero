@@ -17,7 +17,7 @@ from zotero_curator.arxiv import (
     fetch_arxiv_record,
     first_success_key,
 )
-from zotero_curator.client import get_attachment_details, get_zotero_client
+from zotero_curator.client import get_attachment_details, get_zotero_client, local_api_get
 from zotero_curator.formatting import (
     DEFAULT_CHUNK_CHARS,
     DEFAULT_CHUNK_OVERLAP,
@@ -94,6 +94,18 @@ def write_guard(dry_run: bool) -> str | None:
         return (
             "Write blocked. Set `write_enabled = true` in the Curator settings or set "
             "ZOTERO_WRITE_ENABLED=true, then call the tool with dry_run=false."
+        )
+    return None
+
+
+def local_only_guard() -> str | None:
+    """Return an error string if not in local mode, else None to proceed."""
+    cfg = load_config()
+    if not cfg.local:
+        return (
+            "This tool requires Zotero local mode. Saved search execution is only "
+            "available through the Zotero Local API (localhost:23119). Switch to "
+            "local mode with `zotero-curator setup --local`."
         )
     return None
 
@@ -686,6 +698,58 @@ def list_tags(limit: int | None = 200) -> str:
         else:
             names.append(str(tag))
     return "# Zotero Tags\n\n" + "\n".join(f"- {name}" for name in sorted(names, key=str.lower))
+
+
+@mcp.tool(name="zotero_list_saved_searches", description="List all saved searches in the user's Zotero library.")
+def list_saved_searches() -> str:
+    try:
+        zot = get_zotero_client()
+        searches: Any = zot.searches()
+        for page in zot.iterfollow():
+            searches.extend(page)
+    except Exception as exc:
+        return f"Error listing saved searches: {exc}"
+    if not searches:
+        return "No saved searches found."
+    lines = [f"# Saved Searches ({len(searches)})", ""]
+    for search in searches:
+        data = search.get("data", {})
+        key = search.get("key") or data.get("key", "")
+        name = data.get("name", "Untitled")
+        conditions = data.get("conditions", [])
+        cond_count = len(conditions)
+        lines.append(f"- `{key}` **{name}** ({cond_count} condition{'s' if cond_count != 1 else ''})")
+    return "\n".join(lines)
+
+
+@mcp.tool(
+    name="zotero_saved_search_items",
+    description="Execute a saved search by key and return matching items. Requires Zotero local mode.",
+)
+def saved_search_items(
+    search_key: str,
+    limit: int | None = 50,
+) -> str:
+    if not search_key.strip():
+        return "Please provide a saved search key."
+    block = local_only_guard()
+    if block:
+        return f"# Blocked: Saved Search Items\n{block}"
+    limit = clamp_int(limit, 50, 1, 200)
+    try:
+        items: Any = local_api_get(f"searches/{search_key.strip()}/items?limit={limit}")
+    except Exception as exc:
+        return f"Error executing saved search: {exc}"
+    if not items:
+        return f"No items found for saved search `{search_key}`."
+    header = [
+        f"# Saved Search Results for `{search_key}`",
+        f"Found {len(items)} item(s).",
+        "Use item keys with zotero_item_metadata or zotero_item_fulltext_info.",
+    ]
+    return "\n\n".join(
+        header + [format_item_summary(item, i + 1) for i, item in enumerate(items)]
+    )
 
 
 @mcp.tool(name="zotero_semantic_rebuild", description="Build or refresh the optional semantic search index.")
