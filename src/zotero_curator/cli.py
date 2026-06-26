@@ -158,6 +158,11 @@ def cmd_install_client(args: argparse.Namespace) -> int:
         print("No client config paths found for the requested client(s).")
         return 1
 
+    if args.uvx and args.command == "zotero-curator" and not shutil.which("uvx"):
+        print("ERROR: 'uvx' not found on PATH.")
+        print("Install uv (https://docs.astral.sh/uv/) or pass --command /absolute/path/to/uvx")
+        return 1
+
     server_entry = _server_config(args.command, uvx=args.uvx)
     actions: list[str] = []
     skipped = 0

@@ -251,3 +251,16 @@ class TestInstallClient:
         )
         result = main(["install-client", "--client", "claude-desktop", "--apply"])
         assert result == 1
+
+    def test_uvx_not_found_fails(self, monkeypatch, tmp_path: Path) -> None:
+        config_dir = tmp_path / "claude"
+        config_dir.mkdir()
+        config_file = config_dir / "claude_desktop_config.json"
+        config_file.write_text('{"mcpServers": {}}')
+        monkeypatch.setattr("shutil.which", lambda cmd: None)
+        monkeypatch.setattr(
+            "zotero_curator.cli._client_config_paths",
+            lambda client: {"claude-desktop": config_file},
+        )
+        result = main(["install-client", "--client", "claude-desktop", "--uvx", "--apply"])
+        assert result == 1
