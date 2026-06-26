@@ -59,12 +59,12 @@ class TestEnvFlag:
 class TestConfigPaths:
     def test_config_file_override(self, monkeypatch) -> None:
         monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", "/tmp/custom-config.toml")
-        assert str(config_file()) == "/tmp/custom-config.toml"
+        assert config_file() == Path("/tmp/custom-config.toml")
 
     def test_config_dir_override(self, monkeypatch) -> None:
         monkeypatch.setenv("ZOTERO_CURATOR_CONFIG_DIR", "/tmp/custom-dir")
         result = config_dir()
-        assert str(result) == "/tmp/custom-dir"
+        assert result == Path("/tmp/custom-dir")
         # config_file should be within config_dir
         monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", "")
         monkeypatch.delenv("ZOTERO_CURATOR_CONFIG", raising=False)
@@ -72,11 +72,11 @@ class TestConfigPaths:
 
     def test_default_log_dir_override(self, monkeypatch) -> None:
         monkeypatch.setenv("ZOTERO_CURATOR_LOG_DIR", "/tmp/custom-logs")
-        assert str(default_log_dir()) == "/tmp/custom-logs"
+        assert default_log_dir() == Path("/tmp/custom-logs")
 
     def test_default_data_dir_override(self, monkeypatch) -> None:
         monkeypatch.setenv("ZOTERO_CURATOR_DATA_DIR", "/tmp/custom-data")
-        assert str(default_data_dir()) == "/tmp/custom-data"
+        assert default_data_dir() == Path("/tmp/custom-data")
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +243,11 @@ class TestLoadConfig:
     def test_local_default_library_id(self, monkeypatch, tmp_path: Path) -> None:
         path = tmp_path / "config.toml"
         monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+        # Clear Zotero env vars so the config file values are actually tested
+        monkeypatch.delenv("ZOTERO_API_KEY", raising=False)
+        monkeypatch.delenv("ZOTERO_LIBRARY_ID", raising=False)
+        monkeypatch.delenv("ZOTERO_LIBRARY_TYPE", raising=False)
+        monkeypatch.delenv("ZOTERO_LOCAL", raising=False)
         write_config(local=True, path=path)
         cfg = load_config()
         assert cfg.library_id == "0"
