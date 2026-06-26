@@ -220,3 +220,19 @@ class TestInstallClient:
         assert result == 0
         printed = "\n".join(str(c) for c in mock_print.call_args_list)
         assert "already has this server entry" in printed
+
+    def test_uvx_absolute_command(self, monkeypatch, tmp_path: Path) -> None:
+        """--uvx with --command uses the provided absolute path."""
+        config_dir = tmp_path / "claude"
+        config_dir.mkdir()
+        config_file = config_dir / "claude_desktop_config.json"
+        config_file.write_text('{"mcpServers": {}}')
+        monkeypatch.setattr(
+            "zotero_curator.cli._client_config_paths",
+            lambda client: {"claude-desktop": config_file} if client in ("claude-desktop", "all") else {},
+        )
+        result = main(["install-client", "--client", "claude-desktop", "--uvx", "--command", "/opt/homebrew/bin/uvx", "--apply"])
+        assert result == 0
+        written = json.loads(config_file.read_text())
+        assert written["mcpServers"]["zotero"]["command"] == "/opt/homebrew/bin/uvx"
+        assert written["mcpServers"]["zotero"]["args"] == ["--from", "zotero-curator", "zotero-curator", "serve"]
