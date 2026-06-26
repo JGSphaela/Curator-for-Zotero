@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
+from urllib.request import Request, urlopen
 
 from pydantic import BaseModel
 from pyzotero import zotero
@@ -30,6 +32,28 @@ def get_zotero_client(config: CuratorConfig | None = None) -> zotero.Zotero:
         api_key=cfg.api_key,
         local=cfg.local,
     )
+
+
+def local_api_get(path: str, config: CuratorConfig | None = None) -> Any:
+    """Make a GET request to the Zotero Local API and return parsed JSON.
+
+    Parameters
+    ----------
+    path:
+        The library-relative path, e.g. ``"searches"`` or ``"searches/<key>/items"``.
+        The function prepends ``/api/<library_type>s/<library_id>/`` automatically.
+    config:
+        Optional explicit config.  Falls back to ``load_config()``.
+    """
+    cfg = config or load_config()
+    if not cfg.local:
+        raise ValueError("local_api_get requires local Zotero mode")
+    library_path = f"{cfg.library_type}s/{cfg.library_id}"
+    url = f"http://localhost:23119/api/{library_path}/{path}"
+    request = Request(url, headers={"User-Agent": "zotero-curator/0.1"})
+    with urlopen(request, timeout=20.0) as response:
+        data = response.read().decode("utf-8")
+    return json.loads(data)
 
 
 def get_attachment_details(

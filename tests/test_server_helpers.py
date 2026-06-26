@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
 
+from zotero_curator.client import local_api_get
 from zotero_curator.server import (
     extract_headings,
     find_heading_matches,
@@ -11,6 +15,9 @@ from zotero_curator.server import (
     get_pdf_attachment_bytes,
     heading_score,
     iter_lines_with_offsets,
+    list_saved_searches,
+    local_only_guard,
+    saved_search_items,
     section_end_offset,
     write_guard,
     zotero_backend_write_capable,
@@ -365,3 +372,171 @@ class TestGetPdfAttachmentBytes:
         )
         _item, _att, _data, error = get_pdf_attachment_bytes(zot, "K1")
         assert "not a PDF" in error
+
+
+# ---------------------------------------------------------------------------
+# local_only_guard
+# ---------------------------------------------------------------------------
+
+
+class TestLocalOnlyGuard:
+    def test_local_returns_none(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        assert local_only_guard() is None
+
+    def test_web_returns_error(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=False, library_id="1", api_key="k")
+        result = local_only_guard()
+        assert result is not None
+        "requires Zotero local mode" in result
+
+
+# ---------------------------------------------------------------------------
+# local_api_get
+# ---------------------------------------------------------------------------
+
+
+class TestLocalApiGet:
+    def test_url_construction(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True, library_id="0")
+        captured_urls: list[str] = []
+
+        def fake_urlopen(request: Any, timeout: float = 20.0) -> Any:
+            captured_urls.append(request.full_url)
+            body = json.dumps([{"key": "S1", "data": {"name": "Test"}}]).encode()
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args: object) -> None:
+                    pass
+
+                def read(self) -> bytes:
+                    return body
+
+            return FakeResponse()
+
+        monkeypatch.setattr("zotero_curator.client.urlopen", fake_urlopen)
+        result = local_api_get("searches")
+        assert captured_urls[0] == "http://localhost:23119/api/users/0/searches"
+        assert result[0]["key"] == "S1"
+
+    def test_url_with_group_library(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True, library_id="42", library_type="group")
+        captured_urls: list[str] = []
+
+        def fake_urlopen(request: Any, timeout: float = 20.0) -> Any:
+            captured_urls.append(request.full_url)
+            body = json.dumps([]).encode()
+
+            class FakeResponse:
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args: object) -> None:
+                    pass
+
+                def read(self) -> bytes:
+                    return body
+
+            return FakeResponse()
+
+        monkeypatch.setattr("zotero_curator.client.urlopen", fake_urlopen)
+        local_api_get("searches")
+        assert captured_urls[0] == "http://localhost:23119/api/groups/42/searches"
+
+    def test_rejects_web_mode(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=False, library_id="1", api_key="k")
+        import pytest
+
+        with pytest.raises(ValueError, match="requires local Zotero mode"):
+            local_api_get("searches")
+
+
+# ---------------------------------------------------------------------------
+# list_saved_searches / saved_search_items (tool-level)
+# ---------------------------------------------------------------------------
+
+
+class TestListSavedSearches:
+    def test_returns_formatted_list(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        from zotero_curator import server
+
+        fake = MagicMock()
+        fake.searches.return_value = [
+            {
+                "key": "SEARCH1",
+                "data": {
+                    "key": "SEARCH1",
+                    "name": "Recent AI papers",
+                    "conditions": [
+                        {"condition": "tag", "operator": "is", "value": "AI"},
+                        {"condition": "dateModified", "operator": "isInTheLast", "value": "7"},
+                    ],
+                },
+            }
+        ]
+        monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+        result = list_saved_searches()
+        assert "Saved Searches (1)" in result
+        assert "SEARCH1" in result
+        assert "Recent AI papers" in result
+        assert "2 conditions" in result
+
+    def test_empty(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        from zotero_curator import server
+
+        fake = MagicMock()
+        fake.searches.return_value = []
+        monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+
+        result = list_saved_searches()
+        assert "No saved searches found" in result
+
+
+class TestSavedSearchItems:
+    def test_blocks_in_web_mode(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=False, library_id="1", api_key="k")
+        result = saved_search_items("SEARCH1")
+        assert "requires Zotero local mode" in result
+
+    def test_calls_local_api(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        from zotero_curator import server
+
+        sample_items = [
+            {
+                "key": "ITEM1",
+                "data": {
+                    "key": "ITEM1",
+                    "itemType": "journalArticle",
+                    "title": "AI Paper",
+                    "creators": [
+                        {"firstName": "Ada", "lastName": "Lovelace", "creatorType": "author"}
+                    ],
+                },
+            }
+        ]
+        monkeypatch.setattr(server, "local_api_get", lambda path, config=None: sample_items)
+
+        result = saved_search_items("SEARCH1")
+        assert "Saved Search Results" in result
+        assert "ITEM1" in result
+        assert "AI Paper" in result
+
+    def test_empty_results(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        from zotero_curator import server
+
+        monkeypatch.setattr(server, "local_api_get", lambda path, config=None: [])
+
+        result = saved_search_items("SEARCH1")
+        assert "No items found" in result
+
+    def test_empty_key_rejected(self, monkeypatch, tmp_path: Path) -> None:
+        result = saved_search_items("  ")
+        assert "Please provide a saved search key" in result
