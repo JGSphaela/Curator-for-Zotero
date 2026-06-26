@@ -262,7 +262,7 @@ The Zotero local API is treated as read-only by Curator because Zotero's Local A
 
 Curator uses a cross-process directory-based lock (`SemanticIndexLock`) to serialize access to the optional semantic index. The lock is held during both `zotero_semantic_rebuild` and `zotero_semantic_search` operations.
 
-If a Curator process crashes while holding the lock, the lock directory (`.index.lock`) persists. Curator detects stale locks older than 300 seconds and automatically cleans them up before acquiring a fresh lock. The lock owner's PID and creation timestamp are written to `owner.txt` inside the lock directory for diagnostics.
+If a Curator process crashes while holding the lock, the lock directory (`.index.lock`) persists. Curator detects stale locks older than 300 seconds and automatically cleans them up before acquiring a fresh lock, but only after verifying the owner PID is no longer running. The lock owner's PID and creation timestamp are written to `owner.txt` inside the lock directory for diagnostics.
 
 Multiple concurrent MCP clients (e.g. Claude Desktop and Cursor) can safely run simultaneously. Read-only tools are lock-free. Write tools use dry-run-first semantics and require explicit `write_enabled = true` plus `dry_run = false`.
 
