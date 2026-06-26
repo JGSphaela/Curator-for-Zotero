@@ -297,3 +297,24 @@ def format_action(title: str, lines: list[str], dry_run: bool, data: dict[str, A
     if dry_run:
         prefix.append("No Zotero changes were made.")
     return "\n".join(prefix + lines)
+
+
+def format_item_list(
+    items: list[dict[str, Any]],
+    title: str,
+    context: str = "",
+) -> str:
+    """Format a list of items as markdown or a single JSON payload."""
+    if wants_json_response():
+        payload = {
+            "title": title,
+            "count": len(items),
+            "items": [_item_to_dict(item) for item in items],
+        }
+        if context:
+            payload["hint"] = context
+        return json.dumps(payload, indent=2, sort_keys=True, default=str)
+    header = [f"# {title}", f"Found {len(items)} item(s)."]
+    if context:
+        header.append(context)
+    return "\n\n".join(header + [format_item_summary(item, i + 1) for i, item in enumerate(items)])

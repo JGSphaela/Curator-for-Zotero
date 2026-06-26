@@ -38,7 +38,7 @@ class SemanticIndexLock:
         self.acquired = False
 
     def _try_reclaim_stale(self) -> bool:
-        """If the lock exists and is older than stale_seconds, remove it. Return True if removed."""
+        """If the lock exists, is older than stale_seconds, and the owner PID is gone, remove it."""
         owner_file = self.path / "owner.txt"
         try:
             if not self.path.is_dir():
@@ -46,6 +46,7 @@ class SemanticIndexLock:
             if self.stale_seconds <= 0:
                 return False
             lock_age = time.time() - self.path.stat().st_mtime
+            owner_pid: int | None = None
             if owner_file.exists():
                 try:
                     content = owner_file.read_text(encoding="utf-8")
@@ -53,11 +54,21 @@ class SemanticIndexLock:
                         if line.startswith("created="):
                             created = float(line.split("=", 1)[1])
                             lock_age = time.time() - created
-                            break
+                        elif line.startswith("pid="):
+                            owner_pid = int(line.split("=", 1)[1])
                 except (OSError, ValueError):
-                    pass  # fall back to mtime
+                    pass  # fall back to mtime, no pid check
             if lock_age < self.stale_seconds:
                 return False
+            # Only reclaim if the owner process is no longer running
+            if owner_pid is not None:
+                try:
+                    os.kill(owner_pid, 0)
+                    return False  # process is still alive — don't reclaim
+                except ProcessLookupError:
+                    pass  # process is gone — safe to reclaim
+                except (PermissionError, OSError):
+                    return False  # can't verify — don't reclaim
             owner_file.unlink(missing_ok=True)
             self.path.rmdir()
             return True

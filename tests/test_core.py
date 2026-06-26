@@ -539,7 +539,7 @@ def test_semantic_search_reports_busy_lock(monkeypatch, tmp_path: Path) -> None:
 
 class TestSemanticStaleLock:
     def test_stale_lock_cleaned_up(self, tmp_path: Path) -> None:
-        """A lock older than stale_seconds is reclaimed."""
+        """A lock older than stale_seconds with a dead PID is reclaimed."""
         store = tmp_path / "semantic"
         store.mkdir(parents=True)
         lock_dir = store / ".index.lock"
@@ -550,6 +550,19 @@ class TestSemanticStaleLock:
         )
         with semantic_index_lock(store, stale_seconds=300):
             assert (store / ".index.lock").is_dir()
+
+    def test_stale_lock_with_live_pid_not_reclaimed(self, tmp_path: Path) -> None:
+        """A stale lock whose owner PID is still running is NOT reclaimed."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid={os.getpid()}\ncreated={time.time() - 600}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
 
     def test_fresh_lock_not_reclaimed(self, tmp_path: Path) -> None:
         """A lock younger than stale_seconds is NOT removed."""
