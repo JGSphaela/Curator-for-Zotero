@@ -3,10 +3,20 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+import pytest
 
 from zotero_curator.runtime import configure_logging, log_event, runtime_diagnostics
 from zotero_curator.settings import CuratorConfig
+
+
+@pytest.fixture(autouse=True)
+def _clean_logger():
+    """Prevent FileHandler accumulation across tests."""
+    yield
+    logging.getLogger("zotero_curator").handlers.clear()
 
 # ---------------------------------------------------------------------------
 # configure_logging
@@ -52,10 +62,14 @@ class TestLogEvent:
 
 
 class TestRuntimeDiagnostics:
-    def test_fields_present(self) -> None:
+    def test_fields_present(self, tmp_path: Path) -> None:
+        log_dir = tmp_path / "logs"
+        data_dir = tmp_path / "data"
+        log_dir.mkdir()
+        data_dir.mkdir()
         cfg = CuratorConfig(
             local=True, library_id="0", library_type="user", write_enabled=False,
-            response_format="markdown", log_dir=Path("/tmp/logs"), data_dir=Path("/tmp/data"),
+            response_format="markdown", log_dir=log_dir, data_dir=data_dir,
         )
         info = runtime_diagnostics(cfg)
         assert info["mode"] == "local Zotero API"
@@ -64,8 +78,8 @@ class TestRuntimeDiagnostics:
         assert info["api_key_set"] is False
         assert info["write_enabled"] is False
         assert info["response_format"] == "markdown"
-        assert "/tmp/logs" in info["log_dir"]
-        assert "/tmp/data" in info["data_dir"]
+        assert str(log_dir) in info["log_dir"]
+        assert str(data_dir) in info["data_dir"]
 
     def test_api_key_set_true(self) -> None:
         cfg = CuratorConfig(api_key="secret")

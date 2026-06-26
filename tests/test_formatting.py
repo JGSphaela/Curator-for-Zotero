@@ -552,13 +552,15 @@ class TestResponseSummary:
 
 
 class TestFormatAction:
-    def test_markdown_dry_run(self) -> None:
+    def test_markdown_dry_run(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "markdown")
         result = format_action("Test", ["line1"], dry_run=True)
         assert "Dry Run: Test" in result
         assert "No Zotero changes" in result
         assert "line1" in result
 
-    def test_markdown_applied(self) -> None:
+    def test_markdown_applied(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "markdown")
         result = format_action("Test", ["line1"], dry_run=False)
         assert "Applied: Test" in result
         assert "No Zotero changes" not in result

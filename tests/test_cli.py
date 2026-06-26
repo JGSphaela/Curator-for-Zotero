@@ -128,7 +128,7 @@ class TestBuildParser:
 
 
 class TestMain:
-    def test_no_args_defaults_to_serve(self, monkeypatch) -> None:
+    def test_no_args_defaults_to_serve(self) -> None:
         """main() with no args should try to start the serve subcommand."""
         # We can't actually run the server, so we mock cmd_serve
         with patch("zotero_curator.cli.cmd_serve", return_value=0) as mock_serve:
@@ -138,7 +138,7 @@ class TestMain:
             args = mock_serve.call_args[0][0]
             assert args.transport == "stdio"
 
-    def test_backward_compat_transport_flag(self, monkeypatch) -> None:
+    def test_backward_compat_transport_flag(self) -> None:
         """`--transport stdio` without subcommand should insert 'serve'."""
         with patch("zotero_curator.cli.cmd_serve", return_value=0) as mock_serve:
             result = main(["--transport", "stdio"])
