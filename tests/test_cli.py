@@ -47,7 +47,7 @@ class TestMcpConfigOutput:
         assert parsed["mcpServers"]["zotero"]["command"] == "zotero-curator"
 
     def test_json_uvx(self) -> None:
-        result = _json_mcp_config("cmd", uvx=True)
+        result = _json_mcp_config("zotero-curator", uvx=True)
         parsed = json.loads(result)
         assert parsed["mcpServers"]["zotero"]["command"] == "uvx"
 
@@ -57,7 +57,7 @@ class TestMcpConfigOutput:
         assert "[mcp_servers.zotero]" in result
 
     def test_toml_uvx(self) -> None:
-        result = _toml_mcp_config("cmd", uvx=True)
+        result = _toml_mcp_config("zotero-curator", uvx=True)
         assert "uvx" in result
 
 
