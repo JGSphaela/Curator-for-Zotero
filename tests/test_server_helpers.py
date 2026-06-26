@@ -388,7 +388,7 @@ class TestLocalOnlyGuard:
         _configure(monkeypatch, tmp_path, local=False, library_id="1", api_key="k")
         result = local_only_guard()
         assert result is not None
-        "requires Zotero local mode" in result
+        assert "requires Zotero local mode" in result
 
 
 # ---------------------------------------------------------------------------
