@@ -35,6 +35,10 @@ class TestGetZoteroClient:
     def test_web_no_key_raises(self, monkeypatch, tmp_path) -> None:
         path = tmp_path / "config.toml"
         monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+        # Clear env vars so the config file values are actually tested
+        monkeypatch.delenv("ZOTERO_API_KEY", raising=False)
+        monkeypatch.delenv("ZOTERO_LIBRARY_ID", raising=False)
+        monkeypatch.delenv("ZOTERO_LIBRARY_TYPE", raising=False)
         write_config(local=False, library_id="123", path=path)
 
         with pytest.raises(ValueError, match="Missing Zotero Web API"):
@@ -43,6 +47,10 @@ class TestGetZoteroClient:
     def test_web_no_library_id_raises(self, monkeypatch, tmp_path) -> None:
         path = tmp_path / "config.toml"
         monkeypatch.setenv("ZOTERO_CURATOR_CONFIG", str(path))
+        # Clear env vars so the config file values are actually tested
+        monkeypatch.delenv("ZOTERO_API_KEY", raising=False)
+        monkeypatch.delenv("ZOTERO_LIBRARY_ID", raising=False)
+        monkeypatch.delenv("ZOTERO_LIBRARY_TYPE", raising=False)
         # local=False, but library_id defaults to "" when not provided and not local
         write_config(local=False, path=path)
 
