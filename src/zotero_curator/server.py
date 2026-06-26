@@ -735,13 +735,11 @@ def saved_search_items(
         return f"# Blocked: Saved Search Items\n{block}"
     limit = clamp_int(limit, 50, 1, 200)
     try:
-        items: Any = local_api_get(f"searches/{search_key.strip()}/items")
+        items: Any = local_api_get(f"searches/{search_key.strip()}/items?limit={limit}")
     except Exception as exc:
         return f"Error executing saved search: {exc}"
     if not items:
         return f"No items found for saved search `{search_key}`."
-    if limit and len(items) > limit:
-        items = items[:limit]
     header = [
         f"# Saved Search Results for `{search_key}`",
         f"Found {len(items)} item(s).",
