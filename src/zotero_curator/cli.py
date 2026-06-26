@@ -160,6 +160,7 @@ def cmd_install_client(args: argparse.Namespace) -> int:
 
     server_entry = _server_config(args.command, uvx=args.uvx)
     actions: list[str] = []
+    skipped = 0
 
     for name, path in targets.items():
         existing: dict[str, Any] = {}
@@ -169,6 +170,7 @@ def cmd_install_client(args: argparse.Namespace) -> int:
                     existing = json.load(f)
             except (json.JSONDecodeError, OSError) as exc:
                 actions.append(f"SKIP {name}: cannot read {path} ({exc})")
+                skipped += 1
                 continue
             if existing.get("mcpServers", {}).get("zotero") == server_entry:
                 actions.append(f"OK {name}: {path} already has this server entry")
@@ -198,7 +200,7 @@ def cmd_install_client(args: argparse.Namespace) -> int:
     print()
     for action in actions:
         print(action)
-    return 0
+    return 1 if skipped else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

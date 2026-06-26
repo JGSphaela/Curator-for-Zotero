@@ -236,3 +236,15 @@ class TestInstallClient:
         written = json.loads(config_file.read_text())
         assert written["mcpServers"]["zotero"]["command"] == "/opt/homebrew/bin/uvx"
         assert written["mcpServers"]["zotero"]["args"] == ["--from", "zotero-curator", "zotero-curator", "serve"]
+
+    def test_skip_returns_nonzero(self, monkeypatch, tmp_path: Path) -> None:
+        config_dir = tmp_path / "claude"
+        config_dir.mkdir()
+        config_file = config_dir / "claude_desktop_config.json"
+        config_file.write_text("NOT VALID JSON{{{")
+        monkeypatch.setattr(
+            "zotero_curator.cli._client_config_paths",
+            lambda client: {"claude-desktop": config_file} if client in ("claude-desktop", "all") else {},
+        )
+        result = main(["install-client", "--client", "claude-desktop", "--apply"])
+        assert result == 1

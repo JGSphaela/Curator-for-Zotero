@@ -32,6 +32,7 @@ from zotero_curator.formatting import (
     format_action,
     format_item,
     format_item_list,
+    format_item_markdown,
     make_snippet,
     normalize_doi,
     normalize_whitespace,
@@ -334,7 +335,7 @@ def get_item_fulltext(item_key: str) -> str:
     if error:
         return f"Error: {error}"
     assert item is not None and attachment is not None and content is not None
-    return f"{format_item(item)}\n\n## Attachment\nKey: `{attachment.key}`\nType: {attachment.content_type}\n\n## Document Content\n\n{content}"
+    return f"{format_item_markdown(item)}\n\n## Attachment\nKey: `{attachment.key}`\nType: {attachment.content_type}\n\n## Document Content\n\n{content}"
 
 
 @mcp.tool(name="zotero_item_fulltext_info", description="Inspect indexed full-text size and chunk count without dumping content.")

@@ -217,9 +217,8 @@ def _item_to_dict(item: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def format_item(item: dict[str, Any]) -> str:
-    if wants_json_response():
-        return json.dumps(_item_to_dict(item), indent=2, sort_keys=True, default=str)
+def format_item_markdown(item: dict[str, Any]) -> str:
+    """Always return a Markdown representation, even in JSON mode. Use for embedding."""
     data = item.get("data", {})
     item_key = item.get("key") or data.get("key", "")
     item_type = data.get("itemType", "unknown")
@@ -263,6 +262,12 @@ def format_item(item: dict[str, Any]) -> str:
     if identifiers:
         formatted.append("\n### Identifiers\n" + "\n".join(identifiers))
     return "\n".join(formatted)
+
+
+def format_item(item: dict[str, Any]) -> str:
+    if wants_json_response():
+        return json.dumps(_item_to_dict(item), indent=2, sort_keys=True, default=str)
+    return format_item_markdown(item)
 
 
 def response_summary(response: Any) -> str:
