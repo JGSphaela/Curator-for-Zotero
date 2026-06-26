@@ -705,6 +705,8 @@ def list_saved_searches() -> str:
     try:
         zot = get_zotero_client()
         searches: Any = zot.searches()
+        for page in zot.iterfollow():
+            searches.extend(page)
     except Exception as exc:
         return f"Error listing saved searches: {exc}"
     if not searches:
