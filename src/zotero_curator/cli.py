@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import sys
@@ -138,12 +139,15 @@ def cmd_add_arxiv(args: argparse.Namespace) -> int:
 
 def _client_config_paths(client: str) -> dict[str, Path]:
     """Return {client_name: config_path} for known MCP clients."""
-    is_macos = platform.system() == "Darwin"
+    system = platform.system()
     home = Path.home()
     paths: dict[str, Path] = {}
     if client in ("claude-desktop", "all"):
-        if is_macos:
+        if system == "Darwin":
             paths["claude-desktop"] = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        elif system == "Windows":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+            paths["claude-desktop"] = appdata / "Claude" / "claude_desktop_config.json"
         else:
             paths["claude-desktop"] = home / ".config" / "claude" / "claude_desktop_config.json"
     if client in ("cursor", "all"):
