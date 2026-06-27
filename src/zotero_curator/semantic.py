@@ -100,12 +100,14 @@ class SemanticIndexLock:
                     pass  # fall back to mtime, no pid check
             if lock_age < self.stale_seconds:
                 return False
-            # Only reclaim if the owner process is known to be gone. If liveness
-            # cannot be verified, keep the lock rather than risking corruption.
-            if owner_pid is not None:
-                owner_running = _pid_is_running(owner_pid)
-                if owner_running is not False:
-                    return False
+            # Only reclaim if the owner process is known to be gone. If the
+            # owner file is absent/malformed or liveness cannot be verified,
+            # keep the lock rather than risking concurrent Chroma access.
+            if owner_pid is None:
+                return False
+            owner_running = _pid_is_running(owner_pid)
+            if owner_running is not False:
+                return False
             owner_file.unlink(missing_ok=True)
             self.path.rmdir()
             return True

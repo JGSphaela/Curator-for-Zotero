@@ -582,15 +582,28 @@ class TestSemanticStaleLock:
         with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
             pass
 
-    def test_stale_lock_uses_mtime_fallback(self, tmp_path: Path) -> None:
-        """When owner.txt is missing, mtime of the lock dir is used."""
+    def test_stale_lock_without_owner_pid_not_reclaimed(self, tmp_path: Path) -> None:
+        """An old lock without a verifiable owner PID is preserved."""
         store = tmp_path / "semantic"
         store.mkdir(parents=True)
         lock_dir = store / ".index.lock"
         lock_dir.mkdir()
         old_time = time.time() - 600
         os.utime(lock_dir, (old_time, old_time))
-        with semantic_index_lock(store, stale_seconds=300):
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
+
+    def test_stale_lock_with_malformed_owner_not_reclaimed(self, tmp_path: Path) -> None:
+        """An old lock with malformed owner.txt is preserved."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid=not-a-pid\ncreated={time.time() - 600}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
             pass
 
     def test_windows_pid_check_does_not_use_os_kill(self, monkeypatch) -> None:
