@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
+import platform
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -28,18 +30,95 @@ class SemanticDocument:
     metadata: dict[str, str]
 
 
+def _pid_is_running(pid: int) -> bool | None:
+    """Return True/False if pid liveness is known, or None when unverifiable."""
+    if pid <= 0:
+        return False
+
+    if platform.system() == "Windows":
+        # On Windows, os.kill(pid, 0) is not a safe liveness probe: values other
+        # than CTRL_C_EVENT/CTRL_BREAK_EVENT can terminate the target process.
+        # Query the process handle instead.
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            get_last_error = getattr(kernel32, "GetLastError", None)
+            last_error = get_last_error() if callable(get_last_error) else 0
+            # ERROR_INVALID_PARAMETER means the process id is not valid. Other
+            # failures, such as access denial, are treated as unverifiable.
+            return False if last_error == 87 else None
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return None
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return None
+    except OSError:
+        return None
+
+
 class SemanticIndexLock:
     """Cross-process semantic-index lock based on atomic directory creation."""
 
-    def __init__(self, store: Path, timeout_seconds: float = 0.0) -> None:
+    def __init__(self, store: Path, timeout_seconds: float = 0.0, stale_seconds: float = 300.0) -> None:
         self.path = store / ".index.lock"
         self.timeout_seconds = max(0.0, timeout_seconds)
+        self.stale_seconds = max(0.0, stale_seconds)
         self.acquired = False
+
+    def _try_reclaim_stale(self) -> bool:
+        """If the lock exists, is older than stale_seconds, and the owner PID is gone, remove it."""
+        owner_file = self.path / "owner.txt"
+        try:
+            if not self.path.is_dir():
+                return False
+            if self.stale_seconds <= 0:
+                return False
+            lock_age = time.time() - self.path.stat().st_mtime
+            owner_pid: int | None = None
+            if owner_file.exists():
+                try:
+                    content = owner_file.read_text(encoding="utf-8")
+                    for line in content.splitlines():
+                        if line.startswith("created="):
+                            created = float(line.split("=", 1)[1])
+                            lock_age = time.time() - created
+                        elif line.startswith("pid="):
+                            owner_pid = int(line.split("=", 1)[1])
+                except (OSError, ValueError):
+                    pass  # fall back to mtime, no pid check
+            if lock_age < self.stale_seconds:
+                return False
+            # Only reclaim if the owner process is known to be gone. If the
+            # owner file is absent/malformed or liveness cannot be verified,
+            # keep the lock rather than risking concurrent Chroma access.
+            if owner_pid is None:
+                return False
+            owner_running = _pid_is_running(owner_pid)
+            if owner_running is not False:
+                return False
+            owner_file.unlink(missing_ok=True)
+            self.path.rmdir()
+            return True
+        except OSError:
+            return False
 
     def __enter__(self) -> SemanticIndexLock:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + self.timeout_seconds
         while True:
+            self._try_reclaim_stale()
             try:
                 os.mkdir(self.path)
             except FileExistsError as exc:
@@ -86,8 +165,8 @@ def semantic_store_dir() -> Path:
     return base / "semantic"
 
 
-def semantic_index_lock(store: Path | None = None, timeout_seconds: float = 0.0) -> SemanticIndexLock:
-    return SemanticIndexLock(store or semantic_store_dir(), timeout_seconds=timeout_seconds)
+def semantic_index_lock(store: Path | None = None, timeout_seconds: float = 0.0, stale_seconds: float = 300.0) -> SemanticIndexLock:
+    return SemanticIndexLock(store or semantic_store_dir(), timeout_seconds=timeout_seconds, stale_seconds=stale_seconds)
 
 
 def document_from_item(item: dict[str, Any]) -> SemanticDocument | None:

@@ -18,6 +18,7 @@ from zotero_curator.formatting import (
     creator_summary,
     format_action,
     format_item,
+    format_item_list,
     format_item_summary,
     make_snippet,
     normalize_doi,
@@ -453,6 +454,39 @@ class TestFormatItemSummary:
 # ---------------------------------------------------------------------------
 
 
+class TestFormatItemList:
+    def test_detailed_markdown_preserves_full_item_metadata(self) -> None:
+        item = {
+            "key": "K",
+            "data": {
+                "itemType": "journalArticle",
+                "title": "Deep Learning",
+                "creators": [{"creatorType": "author", "firstName": "Yann", "lastName": "LeCun"}],
+                "date": "2015",
+                "publicationTitle": "Nature",
+                "abstractNote": "A great paper.",
+                "tags": [{"tag": "DL"}],
+                "url": "https://example.com",
+                "DOI": "10.1000/dl",
+            },
+        }
+        result = format_item_list([item], title="DOI Match: 10.1000/dl", detailed=True)
+        assert "# DOI Match: 10.1000/dl" in result
+        assert "Publication: Nature" in result
+        assert "### Abstract" in result
+        assert "A great paper." in result
+        assert "### Tags" in result
+        assert "### Identifiers" in result
+        assert "1. Deep Learning" not in result
+
+    def test_detailed_json_keeps_single_valid_payload(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "K", "data": {"itemType": "journalArticle", "title": "Deep Learning"}}
+        parsed = json.loads(format_item_list([item], title="DOI Match", detailed=True))
+        assert parsed["count"] == 1
+        assert parsed["items"][0]["title"] == "Deep Learning"
+
+
 class TestFormatItem:
     def test_article_full(self) -> None:
         item = {
@@ -596,3 +630,55 @@ class TestConstants:
         assert DEFAULT_CHUNK_CHARS == 8000
         assert DEFAULT_CHUNK_OVERLAP == 500
         assert MAX_CHUNK_CHARS == 25000
+
+
+class TestFormatItemJson:
+    def test_article_json(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {
+            "key": "K",
+            "data": {
+                "itemType": "journalArticle",
+                "title": "Deep Learning",
+                "creators": [{"creatorType": "author", "firstName": "Yann", "lastName": "LeCun"}],
+                "date": "2015",
+                "DOI": "10.1000/dl",
+                "tags": [{"tag": "DL"}],
+            },
+        }
+        parsed = json.loads(format_item(item))
+        assert parsed["key"] == "K"
+        assert parsed["title"] == "Deep Learning"
+        assert parsed["creators"]["author"] == ["LeCun, Yann"]
+        assert parsed["identifiers"]["DOI"] == "10.1000/dl"
+        assert parsed["tags"] == ["DL"]
+
+    def test_note_json(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "N1", "data": {"itemType": "note", "note": "<p>Hello</p>"}}
+        parsed = json.loads(format_item(item))
+        assert parsed["itemType"] == "note"
+        assert parsed["note"] == "Hello\n"
+
+    def test_minimal_json(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "X", "data": {"itemType": "book"}}
+        parsed = json.loads(format_item(item))
+        assert parsed["key"] == "X"
+        assert parsed["title"] == "Untitled"
+
+
+class TestFormatItemSummaryJson:
+    def test_summary_json_with_index(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "K", "data": {"itemType": "book", "title": "B"}}
+        parsed = json.loads(format_item_summary(item, index=1))
+        assert parsed["index"] == 1
+        assert parsed["key"] == "K"
+
+    def test_summary_json_without_index(self, monkeypatch) -> None:
+        monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+        item = {"key": "K", "data": {"itemType": "book", "title": "B"}}
+        parsed = json.loads(format_item_summary(item))
+        assert "index" not in parsed
+        assert parsed["key"] == "K"

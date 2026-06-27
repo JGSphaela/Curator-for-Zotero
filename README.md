@@ -139,7 +139,12 @@ uvx --from zotero-curator zotero-curator mcp-config --uvx --format json
 uvx --from zotero-curator zotero-curator mcp-config --uvx --format toml
 ```
 
-Current workflow note: `setup` writes Curator's central Zotero settings and prints client config snippets. `mcp-config` only prints JSON/TOML. Neither command edits Claude, Codex, Cursor, or other client config files yet. A future `install-client` or `client-config apply` command should detect known config paths, back up existing files, merge the `zotero` MCP server entry, support `--dry-run`, and preserve user-managed settings.
+The `install-client` subcommand detects known MCP client config paths, backs up existing files, merges the `zotero` MCP server entry, and defaults to dry-run mode:
+
+```bash
+uvx --from zotero-curator zotero-curator install-client --uvx
+uvx --from zotero-curator zotero-curator install-client --uvx --apply
+```
 
 Release instructions are in [docs/release.md](docs/release.md). Claude Desktop MCPB bundle notes are in [docs/mcpb.md](docs/mcpb.md).
 
@@ -224,6 +229,8 @@ Read/navigation:
 - `zotero_list_collections`
 - `zotero_collection_items`
 - `zotero_list_tags`
+- `zotero_list_saved_searches`
+- `zotero_saved_search_items` (local API only)
 - `zotero_semantic_rebuild` (`semantic` extra)
 - `zotero_semantic_search` (`semantic` extra)
 
@@ -250,6 +257,14 @@ Write tools default to `dry_run=true`. Real write calls require all of the follo
 4. The individual tool call sets `dry_run=false`.
 
 The Zotero local API is treated as read-only by Curator because Zotero's Local API v3 documentation says: "Write requests are currently unsupported. Only `GET` is accepted." Local mode can be used for reads and dry-runs, but Curator blocks non-dry-run write tools before they call Zotero. This keeps the implementation aligned with the current API protocol and makes it easy to re-enable local writes later when Zotero adds support.
+
+## Concurrency
+
+Curator uses a cross-process directory-based lock (`SemanticIndexLock`) to serialize access to the optional semantic index. The lock is held during both `zotero_semantic_rebuild` and `zotero_semantic_search` operations.
+
+If a Curator process crashes while holding the lock, the lock directory (`.index.lock`) persists. Curator detects stale locks older than 300 seconds and automatically cleans them up before acquiring a fresh lock, but only after verifying the owner PID is no longer running. The lock owner's PID and creation timestamp are written to `owner.txt` inside the lock directory for diagnostics.
+
+Multiple concurrent MCP clients (e.g. Claude Desktop and Cursor) can safely run simultaneously. Read-only tools are lock-free. Write tools use dry-run-first semantics and require explicit `write_enabled = true` plus `dry_run = false`.
 
 ## Optional extras
 
@@ -297,16 +312,18 @@ Implemented:
 - Python package with console scripts: `zotero-curator` and compatibility alias `zotero-mcp`.
 - Central settings, diagnostics, and structured runtime logs.
 - Client config generation for JSON and TOML MCP clients.
+- Client config apply command (`install-client`) that safely injects the server entry into Claude Desktop and Cursor configs.
 - Read/search/full-text tools.
 - Dry-run-first write tools.
 - arXiv preprint import from IDs, abstract URLs, and PDF URLs.
+- Saved search listing and execution via the Zotero local API.
+- Optional semantic index and PDF extraction extras.
+- Richer structured JSON responses while keeping Markdown defaults.
+- Cross-process semantic index lock with stale lock recovery.
 - Test and lint configuration.
 - CI skeleton.
 
 Next polish:
 
-- Client config apply command that safely injects the recommended `uvx` server entry into Claude/Codex/Cursor configs.
 - PyPI trusted publishing and signed GitHub releases.
 - Claude Desktop `.mcpb` packaging.
-- Optional semantic index and PDF extraction extras.
-- Richer structured JSON responses while keeping Markdown defaults.

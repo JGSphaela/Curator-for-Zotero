@@ -31,7 +31,8 @@ from zotero_curator.formatting import (
     collection_keys,
     format_action,
     format_item,
-    format_item_summary,
+    format_item_list,
+    format_item_markdown,
     make_snippet,
     normalize_doi,
     normalize_whitespace,
@@ -281,13 +282,10 @@ def search_items(
         return f"Error searching Zotero items: {exc}"
     if not results:
         return "No items found matching your query."
-    header = [
-        f"# Search Results for: {query!r}",
-        f"Found {len(results)} item(s).",
-        "Use item keys with zotero_item_metadata or zotero_item_fulltext_info.",
-    ]
-    return "\n\n".join(
-        header + [format_item_summary(item, i + 1) for i, item in enumerate(results)]
+    return format_item_list(
+        results,
+        title=f"Search Results for: {query!r}",
+        context="Use item keys with zotero_item_metadata or zotero_item_fulltext_info.",
     )
 
 
@@ -317,15 +315,12 @@ def find_item_by_doi(doi: str, limit: int | None = 25) -> str:
         item for item in results if normalize_doi(item.get("data", {}).get("DOI", "")) == normalized
     ]
     if exact_matches:
-        header = [f"# DOI Match: {normalized}", f"Found {len(exact_matches)} exact match(es)."]
-        return "\n\n".join(header + [format_item(item) for item in exact_matches])
+        return format_item_list(exact_matches, title=f"DOI Match: {normalized}", detailed=True)
     if results:
-        header = [
-            f"# DOI Search: {normalized}",
-            "No exact DOI match found, but possible matches were returned.",
-        ]
-        return "\n\n".join(
-            header + [format_item_summary(item, i + 1) for i, item in enumerate(results)]
+        return format_item_list(
+            results,
+            title=f"DOI Search: {normalized}",
+            context="No exact DOI match found, but possible matches were returned.",
         )
     return f"No Zotero item found with DOI: {normalized}"
 
@@ -340,7 +335,7 @@ def get_item_fulltext(item_key: str) -> str:
     if error:
         return f"Error: {error}"
     assert item is not None and attachment is not None and content is not None
-    return f"{format_item(item)}\n\n## Attachment\nKey: `{attachment.key}`\nType: {attachment.content_type}\n\n## Document Content\n\n{content}"
+    return f"{format_item_markdown(item)}\n\n## Attachment\nKey: `{attachment.key}`\nType: {attachment.content_type}\n\n## Document Content\n\n{content}"
 
 
 @mcp.tool(name="zotero_item_fulltext_info", description="Inspect indexed full-text size and chunk count without dumping content.")
@@ -677,8 +672,7 @@ def collection_items(collection_key: str, limit: int | None = 50) -> str:
         return f"Error retrieving collection items: {exc}"
     if not items:
         return f"No items found in collection `{collection_key}`."
-    header = [f"# Items in Collection `{collection_key}`", f"Items: {len(items)}"]
-    return "\n\n".join(header + [format_item_summary(item, i + 1) for i, item in enumerate(items)])
+    return format_item_list(items, title=f"Items in Collection `{collection_key}`")
 
 
 @mcp.tool(name="zotero_list_tags", description="List Zotero tags.")
@@ -742,13 +736,10 @@ def saved_search_items(
         return f"Error executing saved search: {exc}"
     if not items:
         return f"No items found for saved search `{search_key}`."
-    header = [
-        f"# Saved Search Results for `{search_key}`",
-        f"Found {len(items)} item(s).",
-        "Use item keys with zotero_item_metadata or zotero_item_fulltext_info.",
-    ]
-    return "\n\n".join(
-        header + [format_item_summary(item, i + 1) for i, item in enumerate(items)]
+    return format_item_list(
+        items,
+        title=f"Saved Search Results for `{search_key}`",
+        context="Use item keys with zotero_item_metadata or zotero_item_fulltext_info.",
     )
 
 
