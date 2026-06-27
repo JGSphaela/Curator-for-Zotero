@@ -308,6 +308,7 @@ def format_item_list(
     items: list[dict[str, Any]],
     title: str,
     context: str = "",
+    detailed: bool = False,
 ) -> str:
     """Format a list of items as markdown or a single JSON payload."""
     if wants_json_response():
@@ -322,4 +323,8 @@ def format_item_list(
     header = [f"# {title}", f"Found {len(items)} item(s)."]
     if context:
         header.append(context)
-    return "\n\n".join(header + [format_item_summary(item, i + 1) for i, item in enumerate(items)])
+    if detailed:
+        formatted_items = [format_item_markdown(item) for item in items]
+    else:
+        formatted_items = [format_item_summary(item, i + 1) for i, item in enumerate(items)]
+    return "\n\n".join(header + formatted_items)

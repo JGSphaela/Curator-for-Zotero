@@ -315,7 +315,7 @@ def find_item_by_doi(doi: str, limit: int | None = 25) -> str:
         item for item in results if normalize_doi(item.get("data", {}).get("DOI", "")) == normalized
     ]
     if exact_matches:
-        return format_item_list(exact_matches, title=f"DOI Match: {normalized}")
+        return format_item_list(exact_matches, title=f"DOI Match: {normalized}", detailed=True)
     if results:
         return format_item_list(
             results,
