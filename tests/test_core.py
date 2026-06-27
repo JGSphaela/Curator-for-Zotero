@@ -29,7 +29,12 @@ from zotero_curator.formatting import (
     tag_names,
     unique_strings,
 )
-from zotero_curator.semantic import SemanticIndexBusyError, document_from_item, semantic_index_lock
+from zotero_curator.semantic import (
+    SemanticIndexBusyError,
+    _pid_is_running,
+    document_from_item,
+    semantic_index_lock,
+)
 from zotero_curator.settings import env_flag, read_config_file, write_config
 
 ARXIV_FEED = """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -587,3 +592,67 @@ class TestSemanticStaleLock:
         os.utime(lock_dir, (old_time, old_time))
         with semantic_index_lock(store, stale_seconds=300):
             pass
+
+    def test_windows_pid_check_does_not_use_os_kill(self, monkeypatch) -> None:
+        """Windows liveness probing must not call os.kill(pid, 0)."""
+        from zotero_curator import semantic
+
+        calls: list[tuple[int, int]] = []
+
+        class FakeKernel32:
+            def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+                assert access == 0x1000
+                assert inherit is False
+                assert pid == 1234
+                return 1
+
+            def GetExitCodeProcess(self, handle: int, exit_code) -> int:
+                assert handle == 1
+                exit_code._obj.value = 259
+                return 1
+
+            def CloseHandle(self, handle: int) -> int:
+                assert handle == 1
+                return 1
+
+            def GetLastError(self) -> int:
+                return 0
+
+        monkeypatch.setattr(semantic.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(semantic.os, "kill", lambda pid, sig: calls.append((pid, sig)))
+        monkeypatch.setattr(semantic.ctypes, "windll", type("FakeWindll", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        assert _pid_is_running(1234) is True
+        assert calls == []
+
+    def test_windows_pid_check_unverifiable_on_access_failure(self, monkeypatch) -> None:
+        """A failed Windows process open should not be treated as safely dead."""
+        from zotero_curator import semantic
+
+        class FakeKernel32:
+            def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+                return 0
+
+            def GetLastError(self) -> int:
+                return 5
+
+        monkeypatch.setattr(semantic.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(semantic.ctypes, "windll", type("FakeWindll", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        assert _pid_is_running(1234) is None
+
+    def test_windows_pid_check_false_for_invalid_parameter(self, monkeypatch) -> None:
+        """Windows ERROR_INVALID_PARAMETER means the process id is gone."""
+        from zotero_curator import semantic
+
+        class FakeKernel32:
+            def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+                return 0
+
+            def GetLastError(self) -> int:
+                return 87
+
+        monkeypatch.setattr(semantic.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(semantic.ctypes, "windll", type("FakeWindll", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        assert _pid_is_running(1234) is False

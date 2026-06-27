@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
+import platform
 import time
 from contextlib import suppress
 from dataclasses import dataclass
@@ -26,6 +28,44 @@ class SemanticDocument:
     key: str
     text: str
     metadata: dict[str, str]
+
+
+def _pid_is_running(pid: int) -> bool | None:
+    """Return True/False if pid liveness is known, or None when unverifiable."""
+    if pid <= 0:
+        return False
+
+    if platform.system() == "Windows":
+        # On Windows, os.kill(pid, 0) is not a safe liveness probe: values other
+        # than CTRL_C_EVENT/CTRL_BREAK_EVENT can terminate the target process.
+        # Query the process handle instead.
+        process_query_limited_information = 0x1000
+        still_active = 259
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(process_query_limited_information, False, pid)
+        if not handle:
+            get_last_error = getattr(kernel32, "GetLastError", None)
+            last_error = get_last_error() if callable(get_last_error) else 0
+            # ERROR_INVALID_PARAMETER means the process id is not valid. Other
+            # failures, such as access denial, are treated as unverifiable.
+            return False if last_error == 87 else None
+        try:
+            exit_code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return None
+            return exit_code.value == still_active
+        finally:
+            kernel32.CloseHandle(handle)
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return None
+    except OSError:
+        return None
 
 
 class SemanticIndexLock:
@@ -60,15 +100,12 @@ class SemanticIndexLock:
                     pass  # fall back to mtime, no pid check
             if lock_age < self.stale_seconds:
                 return False
-            # Only reclaim if the owner process is no longer running
+            # Only reclaim if the owner process is known to be gone. If liveness
+            # cannot be verified, keep the lock rather than risking corruption.
             if owner_pid is not None:
-                try:
-                    os.kill(owner_pid, 0)
-                    return False  # process is still alive — don't reclaim
-                except ProcessLookupError:
-                    pass  # process is gone — safe to reclaim
-                except (PermissionError, OSError):
-                    return False  # can't verify — don't reclaim
+                owner_running = _pid_is_running(owner_pid)
+                if owner_running is not False:
+                    return False
             owner_file.unlink(missing_ok=True)
             self.path.rmdir()
             return True
