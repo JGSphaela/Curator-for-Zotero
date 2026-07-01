@@ -149,7 +149,7 @@ def _client_config_paths(client: str) -> dict[str, Path]:
             appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
             paths["claude-desktop"] = appdata / "Claude" / "claude_desktop_config.json"
         else:
-            paths["claude-desktop"] = home / ".config" / "claude" / "claude_desktop_config.json"
+            paths["claude-desktop"] = home / ".config" / "Claude" / "claude_desktop_config.json"
     if client in ("cursor", "all"):
         paths["cursor"] = home / ".cursor" / "mcp.json"
     return paths

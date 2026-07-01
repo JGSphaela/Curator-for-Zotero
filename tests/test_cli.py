@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from zotero_curator.cli import (
+    _client_config_paths,
     _json_mcp_config,
     _server_config,
     _toml_mcp_config,
@@ -169,6 +170,16 @@ class TestMain:
         mock_print.assert_called()
         printed_path = mock_print.call_args[0][0]
         assert str(path) in str(printed_path)
+
+
+class TestClientConfigPaths:
+    def test_linux_claude_desktop_uses_capitalized_config_dir(self, monkeypatch, tmp_path: Path) -> None:
+        monkeypatch.setattr("zotero_curator.cli.platform.system", lambda: "Linux")
+        monkeypatch.setattr("zotero_curator.cli.Path.home", lambda: tmp_path)
+
+        paths = _client_config_paths("claude-desktop")
+
+        assert paths["claude-desktop"] == tmp_path / ".config" / "Claude" / "claude_desktop_config.json"
 
 
 class TestInstallClient:
