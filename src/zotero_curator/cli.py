@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import sys
+from pathlib import Path
 from typing import Any
 
 from zotero_curator.runtime import configure_logging, log_event
@@ -15,8 +17,9 @@ from zotero_curator.settings import config_file, config_status_lines, load_confi
 
 def _server_config(command: str, uvx: bool = False) -> dict[str, Any]:
     if uvx:
+        uvx_cmd = command if command != "zotero-curator" else shutil.which("uvx") or "uvx"
         return {
-            "command": "uvx",
+            "command": uvx_cmd,
             "args": ["--from", "zotero-curator", "zotero-curator", "serve"],
         }
     return {"command": command, "args": ["serve"]}
@@ -134,6 +137,81 @@ def cmd_add_arxiv(args: argparse.Namespace) -> int:
     return 0
 
 
+def _client_config_paths(client: str) -> dict[str, Path]:
+    """Return {client_name: config_path} for known MCP clients."""
+    system = platform.system()
+    home = Path.home()
+    paths: dict[str, Path] = {}
+    if client in ("claude-desktop", "all"):
+        if system == "Darwin":
+            paths["claude-desktop"] = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        elif system == "Windows":
+            appdata = Path(os.environ.get("APPDATA", home / "AppData" / "Roaming"))
+            paths["claude-desktop"] = appdata / "Claude" / "claude_desktop_config.json"
+        else:
+            paths["claude-desktop"] = home / ".config" / "Claude" / "claude_desktop_config.json"
+    if client in ("cursor", "all"):
+        paths["cursor"] = home / ".cursor" / "mcp.json"
+    return paths
+
+
+def cmd_install_client(args: argparse.Namespace) -> int:
+    dry_run = not args.apply
+    targets = _client_config_paths(args.client)
+    if not targets:
+        print("No client config paths found for the requested client(s).")
+        return 1
+
+    if args.uvx and args.command == "zotero-curator" and not shutil.which("uvx"):
+        print("ERROR: 'uvx' not found on PATH.")
+        print("Install uv (https://docs.astral.sh/uv/) or pass --command /absolute/path/to/uvx")
+        return 1
+
+    server_entry = _server_config(args.command, uvx=args.uvx)
+    actions: list[str] = []
+    skipped = 0
+
+    for name, path in targets.items():
+        existing: dict[str, Any] = {}
+        if path.exists():
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, OSError) as exc:
+                actions.append(f"SKIP {name}: cannot read {path} ({exc})")
+                skipped += 1
+                continue
+            if existing.get("mcpServers", {}).get("zotero") == server_entry:
+                actions.append(f"OK {name}: {path} already has this server entry")
+                continue
+
+        merged = dict(existing)
+        mcp = dict(merged.get("mcpServers", {}))
+        mcp["zotero"] = server_entry
+        merged["mcpServers"] = mcp
+
+        if dry_run:
+            actions.append(f"DRY RUN {name}: would write {path}")
+            actions.append(f"  Server entry: {json.dumps(server_entry)}")
+        else:
+            if path.exists():
+                backup = path.with_suffix(".json.bak")
+                shutil.copy2(path, backup)
+                actions.append(f"BACKUP {name}: {backup}")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as f:
+                json.dump(merged, f, indent=2)
+                f.write("\n")
+            actions.append(f"APPLIED {name}: wrote {path}")
+
+    print("# install-client")
+    print(f"Mode: {'dry run' if dry_run else 'apply'}")
+    print()
+    for action in actions:
+        print(action)
+    return 1 if skipped else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zotero-curator",
@@ -188,6 +266,22 @@ def build_parser() -> argparse.ArgumentParser:
     add_arxiv.add_argument("--allow-duplicate", action="store_true", help="Create even if a possible arXiv match already exists.")
     add_arxiv.add_argument("--apply", action="store_true", help="Apply the write. Default is a dry run.")
     add_arxiv.set_defaults(func=cmd_add_arxiv)
+
+    install_client = subparsers.add_parser(
+        "install-client",
+        help="Detect known MCP client configs and merge the zotero server entry.",
+    )
+    install_client.add_argument(
+        "--client",
+        choices=["claude-desktop", "cursor", "all"],
+        default="all",
+        help="Which client config to target. Default: all.",
+    )
+    install_client.add_argument("--command", default="zotero-curator", help="Command clients should run.")
+    install_client.add_argument("--uvx", action="store_true", help="Use uvx launch config.")
+    install_client.add_argument("--apply", action="store_true", help="Apply changes. Default is dry run.")
+    install_client.set_defaults(func=cmd_install_client)
+
     return parser
 
 
@@ -197,7 +291,8 @@ def main(argv: list[str] | None = None) -> int:
     if not raw_args:
         raw_args = ["serve"]
     # Backward-compatible MCP configs may run `zotero-curator --transport stdio`.
-    if raw_args[0].startswith("--"):
+    # Keep top-level help as top-level help instead of showing only `serve`.
+    if raw_args[0].startswith("--") and raw_args[0] not in {"--help", "-h"}:
         raw_args.insert(0, "serve")
     args = parser.parse_args(raw_args)
     func = getattr(args, "func", None)

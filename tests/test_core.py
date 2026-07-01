@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import os
+import time
 from copy import deepcopy
 from pathlib import Path
 
@@ -27,7 +30,12 @@ from zotero_curator.formatting import (
     tag_names,
     unique_strings,
 )
-from zotero_curator.semantic import SemanticIndexBusyError, document_from_item, semantic_index_lock
+from zotero_curator.semantic import (
+    SemanticIndexBusyError,
+    _pid_is_running,
+    document_from_item,
+    semantic_index_lock,
+)
 from zotero_curator.settings import env_flag, read_config_file, write_config
 
 ARXIV_FEED = """<?xml version=\"1.0\" encoding=\"UTF-8\"?>
@@ -87,6 +95,20 @@ class FakeZotero:
     def update_item(self, item: dict[str, object]):
         self.updated_items.append(deepcopy(item))
         return {"successful": {"0": item.get("key", "ITEM123")}}
+
+
+class FakeArxivZotero(FakeZotero):
+    def __init__(self, upload_response: dict[str, object]) -> None:
+        super().__init__()
+        self.upload_response = upload_response
+        self.uploaded_attachments: list[tuple[list[dict[str, object]], str, str]] = []
+
+    def items(self, **_: object):
+        return []
+
+    def upload_attachments(self, payload: list[dict[str, object]], parentid: str, basedir: str):
+        self.uploaded_attachments.append((deepcopy(payload), parentid, basedir))
+        return self.upload_response
 
 
 def configure_web_writes(monkeypatch, tmp_path: Path) -> None:
@@ -461,7 +483,41 @@ def test_arxiv_payloads() -> None:
 def test_first_success_key() -> None:
     assert first_success_key({"successful": {"0": {"key": "ABC123"}}}) == "ABC123"
     assert first_success_key({"successful": {"0": "DEF456"}}) == "DEF456"
+    assert first_success_key({"success": {"0": {"key": "PDF123"}}}) == "PDF123"
     assert first_success_key({"failed": {}}) is None
+
+
+def test_add_arxiv_stored_pdf_accepts_dict_success_response(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeArxivZotero({"success": {"0": {"key": "PDF123"}}})
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+    monkeypatch.setattr(server, "fetch_arxiv_record", lambda source: parse_arxiv_feed(ARXIV_FEED))
+    monkeypatch.setattr(server, "download_arxiv_pdf", lambda record, temp_dir: Path(temp_dir) / "arxiv-2410.03529v1.pdf")
+
+    result = server.add_arxiv_paper("2410.03529v1", pdf_mode="stored", dry_run=False)
+
+    assert "Created item: `ITEM123`" in result
+    assert "Stored PDF attachment: `PDF123`" in result
+    assert fake.uploaded_attachments[0][1] == "ITEM123"
+    assert fake.uploaded_attachments[0][0][0]["filename"] == "arxiv-2410.03529v1.pdf"
+
+
+def test_add_arxiv_stored_pdf_reports_success_without_key(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeArxivZotero({"success": {"0": {"foo": "bar"}}})
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+    monkeypatch.setattr(server, "fetch_arxiv_record", lambda source: parse_arxiv_feed(ARXIV_FEED))
+    monkeypatch.setattr(server, "download_arxiv_pdf", lambda record, temp_dir: Path(temp_dir) / "arxiv-2410.03529v1.pdf")
+
+    result = server.add_arxiv_paper("2410.03529v1", pdf_mode="stored", dry_run=False)
+
+    assert "Stored PDF attachment uploaded." in result
 
 
 def test_json_action_response(monkeypatch) -> None:
@@ -469,6 +525,19 @@ def test_json_action_response(monkeypatch) -> None:
     response = format_action("Test Action", ["one"], dry_run=True, data={"report": [{"status": "ok"}]})
     assert '"dry_run": true' in response
     assert '"report"' in response
+
+
+def test_apply_organization_plan_json_response_is_single_payload(monkeypatch) -> None:
+    monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+
+    from zotero_curator import server
+
+    response = server.apply_organization_plan([{"type": "unknown", "item_key": "ITEM123"}], dry_run=True)
+    parsed = json.loads(response)
+
+    assert parsed["title"] == "Apply Organization Plan"
+    assert parsed["report"][0]["status"] == "error"
+    assert "results" in parsed
 
 
 def test_semantic_document_from_item() -> None:
@@ -533,3 +602,132 @@ def test_semantic_search_reports_busy_lock(monkeypatch, tmp_path: Path) -> None:
         result = server.semantic_search_items("query")
 
     assert result.startswith("Semantic index busy:")
+
+
+class TestSemanticStaleLock:
+    def test_stale_lock_cleaned_up(self, tmp_path: Path) -> None:
+        """A lock older than stale_seconds with a dead PID is reclaimed."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid=99999\ncreated={time.time() - 600}\n",
+            encoding="utf-8",
+        )
+        with semantic_index_lock(store, stale_seconds=300):
+            assert (store / ".index.lock").is_dir()
+
+    def test_stale_lock_with_live_pid_not_reclaimed(self, tmp_path: Path) -> None:
+        """A stale lock whose owner PID is still running is NOT reclaimed."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid={os.getpid()}\ncreated={time.time() - 600}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
+
+    def test_fresh_lock_not_reclaimed(self, tmp_path: Path) -> None:
+        """A lock younger than stale_seconds is NOT removed."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid=99999\ncreated={time.time()}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
+
+    def test_stale_lock_without_owner_pid_not_reclaimed(self, tmp_path: Path) -> None:
+        """An old lock without a verifiable owner PID is preserved."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        old_time = time.time() - 600
+        os.utime(lock_dir, (old_time, old_time))
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
+
+    def test_stale_lock_with_malformed_owner_not_reclaimed(self, tmp_path: Path) -> None:
+        """An old lock with malformed owner.txt is preserved."""
+        store = tmp_path / "semantic"
+        store.mkdir(parents=True)
+        lock_dir = store / ".index.lock"
+        lock_dir.mkdir()
+        (lock_dir / "owner.txt").write_text(
+            f"pid=not-a-pid\ncreated={time.time() - 600}\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(SemanticIndexBusyError), semantic_index_lock(store, timeout_seconds=0.1, stale_seconds=300):
+            pass
+
+    def test_windows_pid_check_does_not_use_os_kill(self, monkeypatch) -> None:
+        """Windows liveness probing must not call os.kill(pid, 0)."""
+        from zotero_curator import semantic
+
+        calls: list[tuple[int, int]] = []
+
+        class FakeKernel32:
+            def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+                assert access == 0x1000
+                assert inherit is False
+                assert pid == 1234
+                return 1
+
+            def GetExitCodeProcess(self, handle: int, exit_code) -> int:
+                assert handle == 1
+                exit_code._obj.value = 259
+                return 1
+
+            def CloseHandle(self, handle: int) -> int:
+                assert handle == 1
+                return 1
+
+            def GetLastError(self) -> int:
+                return 0
+
+        monkeypatch.setattr(semantic.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(semantic.os, "kill", lambda pid, sig: calls.append((pid, sig)))
+        monkeypatch.setattr(semantic.ctypes, "windll", type("FakeWindll", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        assert _pid_is_running(1234) is True
+        assert calls == []
+
+    def test_windows_pid_check_unverifiable_on_access_failure(self, monkeypatch) -> None:
+        """A failed Windows process open should not be treated as safely dead."""
+        from zotero_curator import semantic
+
+        class FakeKernel32:
+            def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+                return 0
+
+            def GetLastError(self) -> int:
+                return 5
+
+        monkeypatch.setattr(semantic.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(semantic.ctypes, "windll", type("FakeWindll", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        assert _pid_is_running(1234) is None
+
+    def test_windows_pid_check_false_for_invalid_parameter(self, monkeypatch) -> None:
+        """Windows ERROR_INVALID_PARAMETER means the process id is gone."""
+        from zotero_curator import semantic
+
+        class FakeKernel32:
+            def OpenProcess(self, access: int, inherit: bool, pid: int) -> int:
+                return 0
+
+            def GetLastError(self) -> int:
+                return 87
+
+        monkeypatch.setattr(semantic.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(semantic.ctypes, "windll", type("FakeWindll", (), {"kernel32": FakeKernel32()})(), raising=False)
+
+        assert _pid_is_running(1234) is False
