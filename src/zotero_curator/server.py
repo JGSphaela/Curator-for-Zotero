@@ -17,6 +17,13 @@ from zotero_curator.arxiv import (
     fetch_arxiv_record,
     first_success_key,
 )
+from zotero_curator.bibtex import (
+    export_bibtex_managed_file,
+    format_bibtex_export_result,
+    format_validation_report,
+    managed_export_path,
+    validate_latex_citations,
+)
 from zotero_curator.client import get_attachment_details, get_zotero_client, local_api_get
 from zotero_curator.formatting import (
     DEFAULT_CHUNK_CHARS,
@@ -300,6 +307,60 @@ def get_item_metadata(item_key: str) -> str:
     if not item:
         return f"No item found with key: {item_key}"
     return format_item(item)
+
+
+@mcp.tool(
+    name="zotero_export_bibtex_file",
+    description="Export one or more Zotero items to a managed .bib file with cite-key sidecars.",
+)
+def export_bibtex_file(
+    item_keys: list[str],
+    filename: str = "references.bib",
+    overwrite: bool = False,
+    export_mode: Literal["auto", "zotero", "better-bibtex", "better-biblatex"] = "auto",
+) -> str:
+    cfg = load_config()
+    try:
+        zot = get_zotero_client(cfg)
+        result = export_bibtex_managed_file(
+            zot=zot,
+            item_keys=item_keys,
+            cfg=cfg,
+            filename=filename,
+            overwrite=overwrite,
+            export_mode=export_mode,
+        )
+    except Exception as exc:
+        return f"Error exporting BibTeX file: {exc}"
+    return format_bibtex_export_result(result)
+
+
+@mcp.tool(
+    name="zotero_validate_latex_citations",
+    description=(
+        "Validate LaTeX citation keys against a managed Curator .bib export. "
+        "Provide latex_text directly, or a latex_filename located in Curator's managed export directory."
+    ),
+)
+def validate_latex_citations_tool(
+    bib_filename: str = "references.bib",
+    latex_text: str | None = None,
+    latex_filename: str | None = None,
+) -> str:
+    if not latex_text and not latex_filename:
+        return "Please provide latex_text or a latex_filename in Curator's managed export directory."
+    cfg = load_config()
+    try:
+        bib_path = managed_export_path(cfg, bib_filename, suffix=".bib")
+        bibtex_text = bib_path.read_text(encoding="utf-8")
+        if latex_filename:
+            latex_path = managed_export_path(cfg, latex_filename, suffix=".tex")
+            latex_text = latex_path.read_text(encoding="utf-8")
+        assert latex_text is not None
+        report = validate_latex_citations(latex_text, bibtex_text)
+    except Exception as exc:
+        return f"Error validating LaTeX citations: {exc}"
+    return format_validation_report(report)
 
 
 @mcp.tool(name="zotero_find_item_by_doi", description="Find exact Zotero item matches by DOI.")

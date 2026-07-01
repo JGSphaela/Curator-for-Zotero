@@ -165,6 +165,64 @@ uvx --from zotero-curator zotero-curator add-arxiv 2410.03529 --tag AI --collect
 
 This imports arXiv metadata first and stores the PDF as a Zotero file attachment by default. Use `--link-pdf` to attach only the arXiv PDF URL, `--no-pdf` to create only the metadata item, or `--pdf-mode {stored,linked,none}` for explicit control.
 
+## Safe LaTeX citation workflow
+
+Curator can export selected Zotero items directly to a `.bib` file, so an LLM does not need to rewrite BibTeX text by hand.
+
+From MCP, call `zotero_export_bibtex_file` with one or more Zotero item keys. The MCP tool writes only inside Curator's managed data directory, under `exports/`, and rejects path-like filenames such as `../references.bib`.
+
+The `export_mode` argument controls the exporter:
+
+- `auto` default: use Better BibTeX when its local JSON-RPC API is available and the selected items have BBT citation keys; otherwise fall back to Zotero's normal BibTeX export.
+- `zotero`: always use Zotero's normal BibTeX export.
+- `better-bibtex`: require Better BibTeX's `Better BibTeX` translator.
+- `better-biblatex`: require Better BibTeX's `Better BibLaTeX` translator.
+
+When Better BibTeX is used, Curator inherits BBT's configured export behavior rather than trying to reimplement it. That includes BBT citation-key resolution, the selected Better BibTeX/BibLaTeX translator, BBT export preferences and field handling, Unicode/LaTeX conversion behavior, and journal abbreviation behavior when configured in Better BibTeX.
+
+The MCP/CLI response explicitly reports the actual backend and BBT metadata used, for example:
+
+```text
+Exporter: Better BibTeX
+Used Better BibTeX: yes
+Better BibTeX version: 9.0.36
+Zotero version: 9.0.4
+
+## Better BibTeX behavior applied
+- Better BibTeX citation-key resolution
+- Better BibTeX export preferences and field handling
+- Better BibTeX Unicode/LaTeX conversion behavior
+- Better BibTeX journal abbreviation behavior when configured
+- Better BibTeX translator field mapping
+```
+
+or, after fallback/plain Zotero export:
+
+```text
+Exporter: zotero
+Used Better BibTeX: no
+```
+
+The export creates three files:
+
+- `references.bib`: BibTeX or BibLaTeX entries exported from Zotero/Better BibTeX.
+- `references.keys.json`: exporter, whether BBT was used, BBT metadata/fallback reason when relevant, item keys, citation keys, and the generated LaTeX cite command.
+- `references.cite.tex`: a ready-to-use `\cite{...}` snippet.
+
+From the CLI:
+
+```bash
+zotero-curator export-bibtex ITEMKEY1 ITEMKEY2 --out references.bib --mode auto
+```
+
+Validate generated LaTeX against a `.bib` file:
+
+```bash
+zotero-curator validate-citations --tex paper.tex --bib references.bib
+```
+
+This reports missing citation keys, duplicate BibTeX keys, and unused BibTeX entries.
+
 ## Settings
 
 Curator stores central settings in the platform config directory. Print the exact path with:
@@ -217,6 +275,8 @@ Read/navigation:
 - `zotero_search_items`
 - `zotero_find_item_by_doi`
 - `zotero_item_metadata`
+- `zotero_export_bibtex_file`
+- `zotero_validate_latex_citations`
 - `zotero_item_fulltext`
 - `zotero_item_fulltext_info`
 - `zotero_pdf_pages` (`pdf` extra)
