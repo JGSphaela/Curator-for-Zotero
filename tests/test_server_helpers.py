@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+from zotero_curator.bibtex import BibtexExportResult
 from zotero_curator.client import local_api_get
+from zotero_curator.server import (
+    export_bibtex_file as server_export_bibtex_file,
+)
 from zotero_curator.server import (
     extract_headings,
     find_heading_matches,
@@ -19,6 +23,7 @@ from zotero_curator.server import (
     local_only_guard,
     saved_search_items,
     section_end_offset,
+    validate_latex_citations_tool,
     write_guard,
     zotero_backend_write_capable,
 )
@@ -540,3 +545,73 @@ class TestSavedSearchItems:
     def test_empty_key_rejected(self, monkeypatch, tmp_path: Path) -> None:
         result = saved_search_items("  ")
         assert "Please provide a saved search key" in result
+
+
+# ---------------------------------------------------------------------------
+# BibTeX export / citation validation tools
+# ---------------------------------------------------------------------------
+
+
+class TestBibtexExportTool:
+    def test_passes_mode_and_reports_better_bibtex(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        from zotero_curator import server
+
+        fake_zotero = object()
+        captured: dict[str, object] = {}
+
+        def fake_export(**kwargs: object) -> BibtexExportResult:
+            captured.update(kwargs)
+            return BibtexExportResult(
+                bib_path=tmp_path / "exports" / "refs.bib",
+                keys_path=tmp_path / "exports" / "refs.keys.json",
+                cite_path=tmp_path / "exports" / "refs.cite.tex",
+                item_keys=["ABC123"],
+                citation_keys=["lovelace1843notes"],
+                exporter="Better BibLaTeX",
+                exporter_metadata={
+                    "used_better_bibtex": True,
+                    "better_bibtex": {"zotero": "9.0.4", "betterbibtex": "9.0.36"},
+                    "translator": "Better BibLaTeX",
+                    "features_applied": ["Better BibLaTeX translator field mapping"],
+                },
+            )
+
+        monkeypatch.setattr(server, "get_zotero_client", lambda cfg=None: fake_zotero)
+        monkeypatch.setattr(server, "export_bibtex_managed_file", fake_export)
+
+        result = server_export_bibtex_file(
+            ["abc123"], filename="refs.bib", overwrite=True, export_mode="better-biblatex"
+        )
+
+        assert captured["zot"] is fake_zotero
+        assert captured["item_keys"] == ["abc123"]
+        assert captured["filename"] == "refs.bib"
+        assert captured["overwrite"] is True
+        assert captured["export_mode"] == "better-biblatex"
+        assert "Exporter: Better BibLaTeX" in result
+        assert "Used Better BibTeX: yes" in result
+        assert "Better BibTeX version: 9.0.36" in result
+        assert "Better BibLaTeX translator field mapping" in result
+
+    def test_validation_tool_reads_managed_bib_file(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        monkeypatch.setenv("ZOTERO_CURATOR_DATA_DIR", str(tmp_path))
+        export_dir = tmp_path / "exports"
+        export_dir.mkdir()
+        (export_dir / "references.bib").write_text(
+            "@article{lovelace1843notes, title={Notes}}\n", encoding="utf-8"
+        )
+
+        result = validate_latex_citations_tool(
+            bib_filename="references.bib",
+            latex_text=r"See \\cite{lovelace1843notes}.",
+        )
+
+        assert "Status: OK" in result
+        assert "All LaTeX citation keys are present" in result
+
+    def test_validation_tool_rejects_missing_input(self, monkeypatch, tmp_path: Path) -> None:
+        _configure(monkeypatch, tmp_path, local=True)
+        result = validate_latex_citations_tool()
+        assert "Please provide latex_text or a latex_filename" in result

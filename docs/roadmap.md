@@ -32,7 +32,8 @@
 
 - [x] Optional PDF text extraction fallback when Zotero indexed text is missing.
 - [x] Optional semantic search with local embeddings/vector store.
-- [ ] Better citation export helpers.
+- [x] Better citation export helpers: managed BibTeX file export plus citation-key validation.
+- [x] Better BibTeX translator/key-style integration through optional JSON-RPC auto mode.
 - [ ] DOI import with optional stored PDF discovery.
 - [ ] Structured JSON output mode for automation-heavy agents.
 
