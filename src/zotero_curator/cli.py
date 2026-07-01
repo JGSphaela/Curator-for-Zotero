@@ -291,7 +291,8 @@ def main(argv: list[str] | None = None) -> int:
     if not raw_args:
         raw_args = ["serve"]
     # Backward-compatible MCP configs may run `zotero-curator --transport stdio`.
-    if raw_args[0].startswith("--"):
+    # Keep top-level help as top-level help instead of showing only `serve`.
+    if raw_args[0].startswith("--") and raw_args[0] not in {"--help", "-h"}:
         raw_args.insert(0, "serve")
     args = parser.parse_args(raw_args)
     func = getattr(args, "func", None)

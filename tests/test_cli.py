@@ -150,10 +150,20 @@ class TestMain:
             args = mock_serve.call_args[0][0]
             assert args.transport == "stdio"
 
-    def test_help_does_not_crash(self) -> None:
+    def test_help_does_not_crash(self, capsys) -> None:
         with pytest.raises(SystemExit) as exc_info:
             main(["--help"])
         assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert "install-client" in output
+        assert "add-arxiv" in output
+
+    def test_serve_help_still_works(self, capsys) -> None:
+        with pytest.raises(SystemExit) as exc_info:
+            main(["serve", "--help"])
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert "--transport" in output
 
     def test_unknown_command_shows_help(self) -> None:
         # When no func is set (e.g. no subcommand), main returns 2

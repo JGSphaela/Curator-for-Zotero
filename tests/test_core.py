@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import time
 from copy import deepcopy
@@ -94,6 +95,20 @@ class FakeZotero:
     def update_item(self, item: dict[str, object]):
         self.updated_items.append(deepcopy(item))
         return {"successful": {"0": item.get("key", "ITEM123")}}
+
+
+class FakeArxivZotero(FakeZotero):
+    def __init__(self, upload_response: dict[str, object]) -> None:
+        super().__init__()
+        self.upload_response = upload_response
+        self.uploaded_attachments: list[tuple[list[dict[str, object]], str, str]] = []
+
+    def items(self, **_: object):
+        return []
+
+    def upload_attachments(self, payload: list[dict[str, object]], parentid: str, basedir: str):
+        self.uploaded_attachments.append((deepcopy(payload), parentid, basedir))
+        return self.upload_response
 
 
 def configure_web_writes(monkeypatch, tmp_path: Path) -> None:
@@ -468,7 +483,41 @@ def test_arxiv_payloads() -> None:
 def test_first_success_key() -> None:
     assert first_success_key({"successful": {"0": {"key": "ABC123"}}}) == "ABC123"
     assert first_success_key({"successful": {"0": "DEF456"}}) == "DEF456"
+    assert first_success_key({"success": {"0": {"key": "PDF123"}}}) == "PDF123"
     assert first_success_key({"failed": {}}) is None
+
+
+def test_add_arxiv_stored_pdf_accepts_dict_success_response(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeArxivZotero({"success": {"0": {"key": "PDF123"}}})
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+    monkeypatch.setattr(server, "fetch_arxiv_record", lambda source: parse_arxiv_feed(ARXIV_FEED))
+    monkeypatch.setattr(server, "download_arxiv_pdf", lambda record, temp_dir: Path(temp_dir) / "arxiv-2410.03529v1.pdf")
+
+    result = server.add_arxiv_paper("2410.03529v1", pdf_mode="stored", dry_run=False)
+
+    assert "Created item: `ITEM123`" in result
+    assert "Stored PDF attachment: `PDF123`" in result
+    assert fake.uploaded_attachments[0][1] == "ITEM123"
+    assert fake.uploaded_attachments[0][0][0]["filename"] == "arxiv-2410.03529v1.pdf"
+
+
+def test_add_arxiv_stored_pdf_reports_success_without_key(monkeypatch, tmp_path: Path) -> None:
+    configure_web_writes(monkeypatch, tmp_path)
+
+    from zotero_curator import server
+
+    fake = FakeArxivZotero({"success": {"0": {"foo": "bar"}}})
+    monkeypatch.setattr(server, "get_zotero_client", lambda: fake)
+    monkeypatch.setattr(server, "fetch_arxiv_record", lambda source: parse_arxiv_feed(ARXIV_FEED))
+    monkeypatch.setattr(server, "download_arxiv_pdf", lambda record, temp_dir: Path(temp_dir) / "arxiv-2410.03529v1.pdf")
+
+    result = server.add_arxiv_paper("2410.03529v1", pdf_mode="stored", dry_run=False)
+
+    assert "Stored PDF attachment uploaded." in result
 
 
 def test_json_action_response(monkeypatch) -> None:
@@ -476,6 +525,19 @@ def test_json_action_response(monkeypatch) -> None:
     response = format_action("Test Action", ["one"], dry_run=True, data={"report": [{"status": "ok"}]})
     assert '"dry_run": true' in response
     assert '"report"' in response
+
+
+def test_apply_organization_plan_json_response_is_single_payload(monkeypatch) -> None:
+    monkeypatch.setenv("ZOTERO_CURATOR_RESPONSE_FORMAT", "json")
+
+    from zotero_curator import server
+
+    response = server.apply_organization_plan([{"type": "unknown", "item_key": "ITEM123"}], dry_run=True)
+    parsed = json.loads(response)
+
+    assert parsed["title"] == "Apply Organization Plan"
+    assert parsed["report"][0]["status"] == "error"
+    assert "results" in parsed
 
 
 def test_semantic_document_from_item() -> None:

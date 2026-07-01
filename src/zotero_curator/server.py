@@ -43,6 +43,7 @@ from zotero_curator.formatting import (
     tag_names,
     tokenize_query,
     unique_strings,
+    wants_json_response,
 )
 from zotero_curator.pdf_tools import OptionalPdfDependencyError, extract_pages, outline, page_count
 from zotero_curator.runtime import configure_logging, log_event, runtime_diagnostics
@@ -874,13 +875,11 @@ def add_arxiv_paper(
                 pdf_path = download_arxiv_pdf(record, temp_dir)
                 upload_payload = arxiv_imported_pdf_attachment_item(record, pdf_path.name)
                 upload_response: Any = zot.upload_attachments([upload_payload], parentid=parent_key, basedir=temp_dir)
-            uploaded = upload_response.get("success", []) if isinstance(upload_response, dict) else []
-            if uploaded:
-                attachment_key = uploaded[0].get("key") if isinstance(uploaded[0], dict) else None
-                if attachment_key:
-                    lines.append(f"Stored PDF attachment: `{attachment_key}`")
-                else:
-                    lines.append("Stored PDF attachment uploaded.")
+            attachment_key = first_success_key(upload_response)
+            if attachment_key:
+                lines.append(f"Stored PDF attachment: `{attachment_key}`")
+            elif isinstance(upload_response, dict) and upload_response.get("success"):
+                lines.append("Stored PDF attachment uploaded.")
             else:
                 lines.append("Stored PDF attachment response: " + response_summary(upload_response))
     except Exception as exc:
@@ -1160,6 +1159,13 @@ def apply_organization_plan(plan: list[dict[str, Any]], dry_run: bool = True) ->
     if not dry_run:
         lines.append("Rollback: automatic rollback is not attempted; use the per-step report and rerun a corrective dry-run plan before applying fixes.")
     log_event("organization_plan", dry_run=dry_run, operations=len(plan), completed=completed, errors=errors)
+    if wants_json_response():
+        return format_action(
+            "Apply Organization Plan",
+            lines,
+            dry_run,
+            data={"report": report, "results": results},
+        )
     return "\n\n".join([
         format_action("Apply Organization Plan", lines, dry_run, data={"report": report}),
         *results,
