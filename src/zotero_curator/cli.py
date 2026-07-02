@@ -137,6 +137,51 @@ def cmd_add_arxiv(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_bibtex(args: argparse.Namespace) -> int:
+    from zotero_curator.bibtex import (
+        DEFAULT_BIBTEX_FILENAME,
+        export_bibtex_file,
+        format_bibtex_export_result,
+        managed_export_path,
+    )
+    from zotero_curator.client import get_zotero_client
+
+    cfg = load_config()
+    bib_path = (
+        Path(args.out).expanduser()
+        if args.out
+        else managed_export_path(cfg, DEFAULT_BIBTEX_FILENAME, suffix=".bib")
+    )
+    try:
+        result = export_bibtex_file(
+            zot=get_zotero_client(cfg),
+            item_keys=args.item_keys,
+            bib_path=bib_path,
+            overwrite=args.overwrite,
+            cfg=cfg,
+            export_mode=args.mode,
+        )
+    except Exception as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    print(format_bibtex_export_result(result))
+    return 0
+
+
+def cmd_validate_citations(args: argparse.Namespace) -> int:
+    from zotero_curator.bibtex import format_validation_report, validate_latex_citations
+
+    try:
+        latex_text = Path(args.tex).expanduser().read_text(encoding="utf-8")
+        bibtex_text = Path(args.bib).expanduser().read_text(encoding="utf-8")
+        report = validate_latex_citations(latex_text, bibtex_text)
+    except Exception as exc:
+        print(f"ERROR: {exc}")
+        return 1
+    print(format_validation_report(report))
+    return 0 if report.ok else 1
+
+
 def _client_config_paths(client: str) -> dict[str, Path]:
     """Return {client_name: config_path} for known MCP clients."""
     system = platform.system()
@@ -266,6 +311,29 @@ def build_parser() -> argparse.ArgumentParser:
     add_arxiv.add_argument("--allow-duplicate", action="store_true", help="Create even if a possible arXiv match already exists.")
     add_arxiv.add_argument("--apply", action="store_true", help="Apply the write. Default is a dry run.")
     add_arxiv.set_defaults(func=cmd_add_arxiv)
+
+    export_bibtex = subparsers.add_parser(
+        "export-bibtex",
+        help="Export Zotero item keys to a .bib file plus citation sidecars.",
+    )
+    export_bibtex.add_argument("item_keys", nargs="+", help="Zotero item key(s) to export.")
+    export_bibtex.add_argument("--out", help="Output .bib path. Defaults to Curator's managed export directory.")
+    export_bibtex.add_argument("--overwrite", action="store_true", help="Overwrite an existing .bib file.")
+    export_bibtex.add_argument(
+        "--mode",
+        choices=["auto", "zotero", "better-bibtex", "better-biblatex"],
+        default="auto",
+        help="Export backend. Default: auto uses Better BibTeX when available, then falls back to Zotero.",
+    )
+    export_bibtex.set_defaults(func=cmd_export_bibtex)
+
+    validate_citations = subparsers.add_parser(
+        "validate-citations",
+        help="Validate citation keys in a .tex file against a .bib file.",
+    )
+    validate_citations.add_argument("--tex", required=True, help="LaTeX .tex file to scan.")
+    validate_citations.add_argument("--bib", required=True, help="BibTeX .bib file to compare against.")
+    validate_citations.set_defaults(func=cmd_validate_citations)
 
     install_client = subparsers.add_parser(
         "install-client",

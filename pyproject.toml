@@ -20,6 +20,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
+    "bibtexparser>=1.4.4,<2",
     "mcp[cli]>=1.2.1",
     "platformdirs>=4.3.6",
     "pydantic>=2.10.6",
