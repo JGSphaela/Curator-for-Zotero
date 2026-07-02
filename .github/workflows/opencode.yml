@@ -27,7 +27,6 @@ jobs:
 
       - name: Run opencode
         uses: anomalyco/opencode/github@latest
-        env:
-          XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
         with:
-          model: xiaomi-token-plan-cn/mimo-v2.5-pro
+          model: opencode/deepseek-v4-flash-free
+          variant: max
