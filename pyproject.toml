@@ -1,6 +1,6 @@
 [project]
 name = "zotero-curator"
-version = "0.1.1"
+version = "0.1.2"
 description = "Research-focused MCP server and setup helper for Zotero"
 authors = [{ name = "Sphaela / JGSphaela contributors" }]
 maintainers = [{ name = "Sphaela / JGSphaela contributors" }]
