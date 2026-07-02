@@ -143,6 +143,13 @@ def test_extract_latex_citation_keys_handles_biblatex_multicites() -> None:
     assert nocite_all is False
 
 
+def test_extract_latex_citation_keys_handles_biblatex_parenthetical_multicites() -> None:
+    latex = r"\cites(see)(also){alpha}(cf.){missing}"
+    keys, nocite_all = extract_latex_citation_keys(latex)
+    assert keys == ["alpha", "missing"]
+    assert nocite_all is False
+
+
 def test_validate_latex_citations_reports_missing_in_multicite() -> None:
     report = validate_latex_citations(
         r"A \cites{alpha}{missing}.",

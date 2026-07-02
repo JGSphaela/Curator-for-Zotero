@@ -504,9 +504,10 @@ def skip_latex_optional_arguments(text: str, pos: int) -> int:
 
     while True:
         pos = skip_latex_whitespace(text, pos)
-        if pos >= len(text) or text[pos] != "[":
+        if pos >= len(text) or text[pos] not in ("[", "("):
             return pos
-        end = text.find("]", pos + 1)
+        close = "]" if text[pos] == "[" else ")"
+        end = text.find(close, pos + 1)
         if end == -1:
             return pos
         pos = end + 1
