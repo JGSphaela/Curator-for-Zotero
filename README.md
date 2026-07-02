@@ -173,10 +173,12 @@ From MCP, call `zotero_export_bibtex_file` with one or more Zotero item keys. Th
 
 The `export_mode` argument controls the exporter:
 
-- `auto` default: use Better BibTeX when its local JSON-RPC API is available and the selected items have BBT citation keys; otherwise fall back to Zotero's normal BibTeX export.
+- `auto` default: use Better BibTeX when its local JSON-RPC API is available and the selected personal-library items have BBT citation keys; otherwise fall back to Zotero's normal BibTeX export.
 - `zotero`: always use Zotero's normal BibTeX export.
 - `better-bibtex`: require Better BibTeX's `Better BibTeX` translator.
 - `better-biblatex`: require Better BibTeX's `Better BibLaTeX` translator.
+
+Better BibTeX export mode is currently supported for personal libraries. For group libraries, Curator uses Zotero export in `auto` mode and reports the Better BibTeX fallback reason. Explicit `better-bibtex` or `better-biblatex` group-library exports fail with a clear error because Curator stores Zotero's public group id, while Better BibTeX `item.export` may require Zotero's internal library id.
 
 When Better BibTeX is used, Curator inherits BBT's configured export behavior rather than trying to reimplement it. That includes BBT citation-key resolution, the selected Better BibTeX/BibLaTeX translator, BBT export preferences and field handling, Unicode/LaTeX conversion behavior, and journal abbreviation behavior when configured in Better BibTeX.
 

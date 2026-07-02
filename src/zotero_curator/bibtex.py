@@ -23,10 +23,17 @@ BBT_TRANSLATORS = {
     "better-bibtex": "Better BibTeX",
     "better-biblatex": "Better BibLaTeX",
 }
+BBT_GROUP_EXPORT_UNSUPPORTED = (
+    "Better BibTeX export for group libraries is currently disabled because Curator stores "
+    "Zotero's public group id, while Better BibTeX item.export may require Zotero's "
+    "internal library id. Use Zotero export mode for group libraries."
+)
 ExportMode = Literal["auto", "zotero", "better-bibtex", "better-biblatex"]
 _SAFE_FILENAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ -]{0,127}")
 _BIBTEX_KEY_RE = re.compile(r"@\s*[A-Za-z]+\s*\{\s*([^,]+?)\s*,")
 _CITE_COMMAND_RE = re.compile(r"\\(?P<command>[A-Za-z]*cite[A-Za-z]*|nocite)\*?")
+_LATEX_OPEN_TO_CLOSE = {"[": "]", "{": "}", "(": ")"}
+_LATEX_CLOSERS = set(_LATEX_OPEN_TO_CLOSE.values())
 
 
 class BetterBibtexUnavailableError(RuntimeError):
@@ -279,15 +286,11 @@ def bbt_export_items(
     """Export items through Better BibTeX's configured translators."""
 
     bbt_info = bbt_ready()
+    if cfg.library_type != "user":
+        raise BetterBibtexUnavailableError(BBT_GROUP_EXPORT_UNSUPPORTED)
     citation_keys, normalized = bbt_citation_keys(item_keys, cfg)
     translator = BBT_TRANSLATORS[export_mode]
-    library_id: str | int | None = None
-    if cfg.library_type != "user":
-        library_id = cfg.library_id
-    params: list[Any] = [citation_keys, translator]
-    if library_id is not None:
-        params.append(library_id)
-    result = bbt_json_rpc("item.export", params)
+    result = bbt_json_rpc("item.export", [citation_keys, translator])
     bibtex_text = bibtex_response_to_text(result)
     if not bibtex_text:
         raise BetterBibtexUnavailableError("Better BibTeX returned an empty export.")
@@ -499,28 +502,60 @@ def skip_latex_whitespace(text: str, pos: int) -> int:
     return pos
 
 
-def skip_latex_optional_arguments(text: str, pos: int) -> int:
-    """Skip simple LaTeX optional arguments after a cite command or cite group."""
+def find_latex_argument_end(text: str, pos: int, opener: str, closer: str) -> int | None:
+    """Return the balanced end position for a LaTeX argument delimiter."""
+
+    if pos >= len(text) or text[pos] != opener:
+        return None
+    expected_closers = [closer]
+    cursor = pos + 1
+    while cursor < len(text):
+        char = text[cursor]
+        if char == "\\":
+            cursor += 2
+            continue
+        if char in _LATEX_OPEN_TO_CLOSE:
+            expected_closers.append(_LATEX_OPEN_TO_CLOSE[char])
+        elif char in _LATEX_CLOSERS:
+            if char == expected_closers[-1]:
+                expected_closers.pop()
+                if not expected_closers:
+                    return cursor
+            elif len(expected_closers) > 1:
+                return None
+        cursor += 1
+    return None
+
+
+def skip_latex_delimited_arguments(text: str, pos: int, opener: str, closer: str) -> int:
+    """Skip balanced delimited LaTeX arguments after a cite command or cite group."""
 
     while True:
         pos = skip_latex_whitespace(text, pos)
-        if pos >= len(text) or text[pos] not in ("[", "("):
-            return pos
-        close = "]" if text[pos] == "[" else ")"
-        end = text.find(close, pos + 1)
-        if end == -1:
+        end = find_latex_argument_end(text, pos, opener, closer)
+        if end is None:
             return pos
         pos = end + 1
 
 
+def skip_latex_optional_arguments(text: str, pos: int) -> int:
+    """Skip simple LaTeX optional bracket arguments."""
+
+    return skip_latex_delimited_arguments(text, pos, "[", "]")
+
+
+def skip_latex_parenthetical_arguments(text: str, pos: int) -> int:
+    """Skip simple BibLaTeX multicite parenthetical arguments."""
+
+    return skip_latex_delimited_arguments(text, pos, "(", ")")
+
+
 def read_latex_braced_argument(text: str, pos: int) -> tuple[str | None, int]:
-    """Read a simple braced LaTeX argument starting near pos."""
+    """Read a balanced braced LaTeX argument starting near pos."""
 
     pos = skip_latex_whitespace(text, pos)
-    if pos >= len(text) or text[pos] != "{":
-        return None, pos
-    end = text.find("}", pos + 1)
-    if end == -1:
+    end = find_latex_argument_end(text, pos, "{", "}")
+    if end is None:
         return None, pos
     return text[pos + 1 : end], end + 1
 
@@ -551,6 +586,8 @@ def extract_latex_citation_keys(latex_text: str) -> tuple[list[str], bool]:
         is_multicite = command.endswith("s") and command != "nocite"
         pos = match.end()
         while True:
+            if is_multicite:
+                pos = skip_latex_parenthetical_arguments(cleaned, pos)
             pos = skip_latex_optional_arguments(cleaned, pos)
             raw_keys, next_pos = read_latex_braced_argument(cleaned, pos)
             if raw_keys is None:

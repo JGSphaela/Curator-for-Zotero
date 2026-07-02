@@ -144,15 +144,24 @@ def test_extract_latex_citation_keys_handles_biblatex_multicites() -> None:
 
 
 def test_extract_latex_citation_keys_handles_biblatex_parenthetical_multicites() -> None:
-    latex = r"\cites(see)(also){alpha}(cf.){missing}"
-    keys, nocite_all = extract_latex_citation_keys(latex)
+    keys, nocite_all = extract_latex_citation_keys(
+        r"\cites(see)(also){alpha}(cf. \S 2){missing}"
+    )
     assert keys == ["alpha", "missing"]
+    assert nocite_all is False
+
+
+def test_extract_latex_citation_keys_handles_nested_optional_arguments() -> None:
+    keys, nocite_all = extract_latex_citation_keys(
+        r"\parencite[see {Chapter [2]}][p. \{12\}]{alpha}"
+    )
+    assert keys == ["alpha"]
     assert nocite_all is False
 
 
 def test_validate_latex_citations_reports_missing_in_multicite() -> None:
     report = validate_latex_citations(
-        r"A \cites{alpha}{missing}.",
+        r"A \cites(see)(also){alpha}(cf.){missing}.",
         "@article{alpha, title={A}}\n",
     )
     assert report.ok is False
@@ -317,30 +326,24 @@ def test_better_bibtex_export_items(monkeypatch, tmp_path: Path) -> None:
     assert [call[0] for call in calls] == ["api.ready", "item.citationkey", "item.export"]
 
 
-def test_better_bibtex_export_items_group_library(monkeypatch, tmp_path: Path) -> None:
+def test_better_bibtex_export_items_group_library_is_scoped_out(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+
     def fake_rpc(method: str, params: list[object] | None = None, timeout: float = 10.0) -> object:
+        calls.append(method)
         if method == "api.ready":
             return {"zotero": "9.0.4", "betterbibtex": "9.0.36"}
-        if method == "item.search":
-            return [
-                {
-                    "id": "http://zotero.org/groups/42/items/ABC123",
-                    "citekey": "lovelace1843notes",
-                }
-            ]
-        if method == "item.export":
-            assert params == [["lovelace1843notes"], "Better BibTeX", "42"]
-            return "@article{lovelace1843notes,\n  title = {Notes},\n}\n"
         raise AssertionError(method)
 
     monkeypatch.setattr("zotero_curator.bibtex.bbt_json_rpc", fake_rpc)
     cfg = CuratorConfig(data_dir=tmp_path, library_type="group", library_id="42")
 
-    _, citation_keys, item_keys, exporter, _ = bbt_export_items(["ABC123"], cfg, "better-bibtex")
+    with pytest.raises(BetterBibtexUnavailableError, match="group libraries"):
+        bbt_export_items(["ABC123"], cfg, "better-bibtex")
 
-    assert citation_keys == ["lovelace1843notes"]
-    assert item_keys == ["ABC123"]
-    assert exporter == "Better BibTeX"
+    assert calls == ["api.ready"]
 
 
 def test_better_biblatex_export_items(monkeypatch, tmp_path: Path) -> None:
@@ -427,4 +430,31 @@ def test_auto_mode_falls_back_to_zotero(monkeypatch, tmp_path: Path) -> None:
     assert exporter == "zotero"
     assert metadata["used_better_bibtex"] is False
     assert metadata["better_bibtex_fallback_reason"] == "BBT unavailable"
+    assert fake.calls == [("ABC123", {"format": "bibtex"})]
+
+
+def test_auto_mode_group_library_falls_back_to_zotero(monkeypatch, tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def fake_rpc(method: str, params: list[object] | None = None, timeout: float = 10.0) -> object:
+        calls.append(method)
+        if method == "api.ready":
+            return {"zotero": "9.0.4", "betterbibtex": "9.0.36"}
+        raise AssertionError(method)
+
+    monkeypatch.setattr("zotero_curator.bibtex.bbt_json_rpc", fake_rpc)
+    cfg = CuratorConfig(data_dir=tmp_path, library_type="group", library_id="42")
+    fake = FakeZotero()
+
+    text, citation_keys, item_keys, exporter, metadata = bibtex_for_items(
+        fake, ["ABC123"], cfg=cfg, export_mode="auto"
+    )
+
+    assert "lovelace1843notes" in text
+    assert citation_keys == ["lovelace1843notes"]
+    assert item_keys == ["ABC123"]
+    assert exporter == "zotero"
+    assert metadata["used_better_bibtex"] is False
+    assert "group libraries" in metadata["better_bibtex_fallback_reason"]
+    assert calls == ["api.ready"]
     assert fake.calls == [("ABC123", {"format": "bibtex"})]
