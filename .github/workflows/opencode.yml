@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   opencode:
-    uses: JGSphaela/ai-review-automation/.github/workflows/opencode.yml@v1
+    uses: labsphaela/ai-review-automation/.github/workflows/opencode.yml@v1
     with:
       model: ${{ vars.OPENCODE_MODEL || 'opencode/deepseek-v4-flash-free' }}
       variant: ${{ vars.OPENCODE_VARIANT || 'max' }}

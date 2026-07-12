@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   ai-review-loop:
-    uses: JGSphaela/ai-review-automation/.github/workflows/ai-review-loop.yml@v1
+    uses: labsphaela/ai-review-automation/.github/workflows/ai-review-loop.yml@v1
     with:
       pr_number: ${{ inputs.pr_number || '' }}
       max_iterations: ${{ fromJSON(vars.AI_REVIEW_MAX_ITERATIONS || '5') }}
