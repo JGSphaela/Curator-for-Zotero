@@ -14,6 +14,14 @@ permissions:
 
 jobs:
   opencode:
+    if: >-
+      github.event.comment.user.type != 'Bot' &&
+      (
+        startsWith(github.event.comment.body, '/oc') ||
+        contains(github.event.comment.body, ' /oc') ||
+        startsWith(github.event.comment.body, '/opencode') ||
+        contains(github.event.comment.body, ' /opencode')
+      )
     uses: labsphaela/ai-review-automation/.github/workflows/opencode.yml@v1
     with:
       model: ${{ vars.OPENCODE_MODEL || 'opencode/deepseek-v4-flash-free' }}
